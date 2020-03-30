@@ -1,0 +1,10 @@
+Min RMSE = 0.8658 ; Max RMSE = 0.8694
+Full ensemble RMSE: 0.8439000371622365
+Full ensemble RPI: 0.6325694634755797
+Correlation reliability vs #ratings by user: -0.034584730900907655
+Correlation reliability vs #ratings to item: -0.03573182991737598
+Correlation reliability vs avg user rating: 0.2749069325091303
+Correlation reliability vs avg item rating: 0.164014527195997
+Correlation reliability vs avg user similarity: 0.4857435679435513
+Correlation reliability vs avg item similarity: 0.12902203592184927
+Correlation error and reliability: -0.19317464733298795

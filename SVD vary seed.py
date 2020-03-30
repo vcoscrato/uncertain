@@ -11,7 +11,7 @@ from Uncertain.metrics import rmse as urmse
 from Uncertain.metrics import build_intervals
 from Uncertain.metrics import RPI
 
-data = Dataset.load_builtin('ml-1m')
+data = Dataset.load_builtin('ml-100k')
 users = [a[0] for a in data.raw_ratings]
 train, test = train_test_split(data.raw_ratings, shuffle=True, random_state=0, test_size=0.1, stratify=users)
 data.raw_ratings = train
@@ -25,8 +25,8 @@ for i in np.unique([test[1] for test in test]):
 train = data.build_full_trainset()
 
 ensemble = 30
-epochs = 2
-factors = 2
+epochs = 20
+factors = 100
 
 models = []
 RMSE = np.empty((ensemble))
@@ -105,7 +105,7 @@ print('Correlation reliability vs avg item similarity:', np.corrcoef(pred_n.T)[0
 err = [abs(u.est - u.r_ui) for u in upreds]
 rel = [u.rel for u in upreds]
 f, ax = plt.subplots()
-sp = ax.scatter(err, rel, markersize=2)
+sp = ax.scatter(err, rel, s=2)
 ax.set_xlabel('Absolute prediction error', Fontsize=20)
 ax.set_ylabel('Prediction reliability', Fontsize=20)
 f.tight_layout()
@@ -114,9 +114,9 @@ print('Correlation error and reliability:', np.corrcoef(err, rel)[0, 1])
 
 a = build_intervals(upreds)
 f, ax = plt.subplots()
-ax.plot(range(1, ensemble+1), a)
+ax.plot(range(1, 21), a)
 ax.set_xlabel('k', Fontsize=20)
 ax.set_ylabel('Interval half width', Fontsize=20)
-ax.set_xticks(range(1, ensemble+1))
+ax.set_xticks(range(1, 21))
 f.tight_layout()
 f.savefig('Results/Seed/Interval width.pdf')
