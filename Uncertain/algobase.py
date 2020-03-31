@@ -7,7 +7,9 @@ inherit.
 from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 
+import numpy as np
 from surprise import PredictionImpossible
+from surprise import similarities as sims
 from .metrics import kendallW
 from collections import namedtuple
 
@@ -191,7 +193,7 @@ class ReliableAlgoBase(object):
 
         return self.trainset.global_mean
 
-    def test(self, testset, verbose=False):
+    def test(self, testset, build_correlation=False, verbose=False):
         """Test the algorithm on given testset, i.e. estimate all the ratings
         in the given testset.
 
@@ -215,6 +217,38 @@ class ReliableAlgoBase(object):
                                     r_ui_trans,
                                     verbose=verbose)
                        for (uid, iid, r_ui_trans) in testset]
+
+        if build_correlation:
+            uids = np.unique([i.uid for i in predictions])
+            iids = np.unique([i.iid for i in predictions])
+            nu = [len(self.trainset.ir[self.trainset.to_inner_uid(uid)]) for uid in uids]
+            ni = np.empty((len(iids)))
+            avgu = [np.mean([t[1] for t in self.trainset.ur[self.trainset.to_inner_uid(uid)]]) for uid in uids]
+            avgi = np.empty((len(iids)))
+            simu = self.compute_similarities().mean(axis=0)
+            self.sim_options['user_based'] = False
+            simi = self.compute_similarities().mean(axis=0)
+            self.sim_options['user_based'] = True
+            for i, iid in enumerate(iids):
+                try:
+                    ni[i] = len(self.trainset.ir[self.trainset.to_inner_iid(iid)])
+                    avgi[i] = np.mean([t[1] for t in self.trainset.ir[self.trainset.to_inner_iid(iid)]])
+                except:
+                    print('a')
+                    ni[i] = 0
+                    avgi[i] = self.trainset.global_mean
+            out = np.empty((len(predictions), 7))
+            for i in range(len(predictions)):
+                out[i] = [predictions[i].rel,
+                          nu[np.where(predictions[i].uid == uids)[0][0]], ni[np.where(predictions[i].iid == iids)[0][0]],
+                          avgu[np.where(predictions[i].uid == uids)[0][0]], avgi[np.where(predictions[i].iid == iids)[0][0]],
+                          simu[self.trainset.to_inner_uid(predictions[i].uid)], simi[self.trainset.to_inner_iid(predictions[i].iid)]]
+            names = ['r_user', 'r_item', 'avg_user', 'avg_item', 'sim_user', 'sim_item']
+            corr = np.corrcoef(out, rowvar=False)[0][1:]
+            corr_dict = {}
+            for i in range(6):
+                corr_dict[names[i]] = corr[i]
+            return predictions, corr_dict
         return predictions
 
     def rank(self, uid, n=10, iid_list=None, remove_rated=True, W=False):
@@ -259,3 +293,45 @@ class ReliableAlgoBase(object):
             W = kendallW(ranks)
             
             return rank, W
+
+    def compute_similarities(self):
+        """Build the similarity matrix.
+        The way the similarity matrix is computed depends on the
+        ``sim_options`` parameter passed at the creation of the algorithm (see
+        :ref:`similarity_measures_configuration`).
+        This method is only relevant for algorithms using a similarity measure,
+        such as the :ref:`k-NN algorithms <pred_package_knn_inpired>`.
+        Returns:
+            The similarity matrix."""
+
+        construction_func = {'cosine': sims.cosine,
+                             'msd': sims.msd,
+                             'pearson': sims.pearson,
+                             'pearson_baseline': sims.pearson_baseline}
+
+        if self.sim_options['user_based']:
+            n_x, yr = self.trainset.n_users, self.trainset.ir
+        else:
+            n_x, yr = self.trainset.n_items, self.trainset.ur
+
+        min_support = self.sim_options.get('min_support', 1)
+
+        args = [n_x, yr, min_support]
+
+        name = self.sim_options.get('name', 'msd').lower()
+        if name == 'pearson_baseline':
+            shrinkage = self.sim_options.get('shrinkage', 100)
+            bu, bi = self.compute_baselines()
+            if self.sim_options['user_based']:
+                bx, by = bu, bi
+            else:
+                bx, by = bi, bu
+
+            args += [self.trainset.global_mean, bx, by, shrinkage]
+
+        try:
+            sim = construction_func[name](*args)
+            return sim
+        except KeyError:
+            raise NameError('Wrong sim name ' + name + '. Allowed values ' +
+                            'are ' + ', '.join(construction_func.keys()) + '.')

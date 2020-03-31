@@ -33,7 +33,7 @@ n_factors = 100
 
 #Build the models
 modelDoubleSVD = DoubleSVD(n_epochs=n_epochs, n_factors=n_factors,
-                           cv_folds=5, random_state=0).fit(data)
+                           cv_folds=4, random_state=0).fit(data)
 modelSVDAverageEnsemble = SVDAverageEnsemble(n_epochs=n_epochs, n_factors=n_factors,
                                              n_models=20, initial_random_state=0).fit(data)
 modelSamplingAverage = SamplingAverageEnsemble(n_epochs=n_epochs, n_factors=n_factors,
@@ -56,6 +56,7 @@ eval['SamplingAverage'] = [urmse(pred['SamplingAverage']), RPI(pred['SamplingAve
 eval['SamplingSVD'] = [urmse(pred['SamplingSVD']), RPI(pred['SamplingSVD'])]
 
 eval = df(eval, index=['RMSE', 'RPI'])
+print(eval)
 
 intervals = list(map(build_intervals, pred.values()))
 aes = ['g-', 'r-', 'b-', 'y-']

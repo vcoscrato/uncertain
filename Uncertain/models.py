@@ -121,7 +121,7 @@ class SamplingSVD(ReliableAlgoBase):
         return pred, rel
 
 class DoubleSVD(ReliableAlgoBase):
-    def __init__(self, n_factors, n_epochs, cv_folds, random_state=0, verbose=True):
+    def __init__(self, n_factors, n_epochs, cv_folds=4, random_state=0, verbose=True):
         ReliableAlgoBase.__init__(self)
         self.n_factors = n_factors
         self.n_epochs = n_epochs
