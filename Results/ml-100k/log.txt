@@ -1,0 +1,69 @@
+{'rmse': {'n_factors': 50, 'n_epochs': 100, 'lr_all': 0.005, 'reg_all': 0.1, 'init_std_dev': 1, 'random_state': 0}} {'rmse': 0.986202988761006}
+[1.05326542 0.98620299 1.10251784 0.99823998]
+Initial model performance: RMSE = 0.9464267855282555; RPI = 0.
+2-model ensemble performance: RMSE = 0.9324595659970327; RPI = -0.6250713646702848.
+3-model ensemble performance: RMSE = 0.9269508165003748; RPI = 0.40833305289491134.
+4-model ensemble performance: RMSE = 0.9229985804653772; RPI = 0.4683944207255288.
+5-model ensemble performance: RMSE = 0.920928163410495; RPI = 0.5205444601407131.
+6-model ensemble performance: RMSE = 0.9196427131302318; RPI = 0.5392879704655882.
+7-model ensemble performance: RMSE = 0.9182944685931033; RPI = 0.5395648014401229.
+8-model ensemble performance: RMSE = 0.917464412883208; RPI = 0.5417528774408709.
+9-model ensemble performance: RMSE = 0.9163264084990675; RPI = 0.5458818992130303.
+10-model ensemble performance: RMSE = 0.9162420560415964; RPI = 0.5536698110962845.
+11-model ensemble performance: RMSE = 0.9155718893341981; RPI = 0.5570184248853901.
+12-model ensemble performance: RMSE = 0.9152895321465562; RPI = 0.5598663949043077.
+13-model ensemble performance: RMSE = 0.9149563762738553; RPI = 0.562126873420563.
+14-model ensemble performance: RMSE = 0.9146562146122958; RPI = 0.5633070103699218.
+15-model ensemble performance: RMSE = 0.9147319553771748; RPI = 0.5615014610618955.
+16-model ensemble performance: RMSE = 0.9142947060136712; RPI = 0.5632269150145396.
+17-model ensemble performance: RMSE = 0.9141361597756166; RPI = 0.5633512910819237.
+18-model ensemble performance: RMSE = 0.9139311138334554; RPI = 0.5606162577767123.
+19-model ensemble performance: RMSE = 0.9137116038741973; RPI = 0.5648287785932325.
+20-model ensemble performance: RMSE = 0.9135790662697884; RPI = 0.5657539150414568.
+Training finished with ensemble size 20.
+Initial model performance: RMSE = 0.9464267855282555; RPI = 0.
+2-model uncertainty performance: RPI = -0.19606660035501206.
+3-model uncertainty performance: RPI = 0.4437783477550568.
+4-model uncertainty performance: RPI = 0.5926822506516842.
+5-model uncertainty performance: RPI = 0.613452903045872.
+6-model uncertainty performance: RPI = 0.662402692486383.
+7-model uncertainty performance: RPI = 0.6921658822386955.
+8-model uncertainty performance: RPI = 0.6999416771313077.
+9-model uncertainty performance: RPI = 0.7402353452576731.
+10-model uncertainty performance: RPI = 0.742525557097129.
+11-model uncertainty performance: RPI = 0.7648023568353273.
+12-model uncertainty performance: RPI = 0.7817237700759685.
+13-model uncertainty performance: RPI = 0.8063779375342589.
+14-model uncertainty performance: RPI = 0.7738625363639189.
+15-model uncertainty performance: RPI = 0.8097946945787322.
+16-model uncertainty performance: RPI = 0.7789719316862551.
+17-model uncertainty performance: RPI = 0.8065617090147983.
+18-model uncertainty performance: RPI = 0.8298225136371215.
+19-model uncertainty performance: RPI = 0.8127500676195109.
+20-model uncertainty performance: RPI = 0.835699512062988.
+Training finished with 20 models.
+Obtaining cross-validated errors
+Fitting reliability estimator
+Estimating biases using sgd...
+{'RMSE': 0.9464267855282555, 'RPI': 0.8180118962640728}
+Full test data metrics:
+            DMF       EMF       RMF
+RMSE  0.946427  0.913579  0.946427
+RPI   0.818012  0.565754  0.752987
+
+Metrics for ratings in [4, 5]:
+            DMF       EMF       RMF
+RMSE  0.838606  0.777697  0.838606
+RPI   0.992434  0.509483  1.048245
+                         User bias  #Ratings by user  User average rating  User average similarity  User average error
+User bias                 1.000000         -0.126246             0.047187                 0.014900            0.969935
+#Ratings by user         -0.126246          1.000000            -0.134980                -0.059654           -0.139924
+User average rating       0.047187         -0.134980             1.000000                 0.381438            0.042101
+User average similarity   0.014900         -0.059654             0.381438                 1.000000            0.010451
+User average error        0.969935         -0.139924             0.042101                 0.010451            1.000000
+                         Item bias  #Ratings to item  Item average rating  Item average similarity  Item average error
+Item bias                 1.000000         -0.218724            -0.118778                -0.084336            0.780281
+#Ratings to item         -0.218724          1.000000             0.415626                 0.330934           -0.213274
+Item average rating      -0.118778          0.415626             1.000000                 0.234732           -0.145836
+Item average similarity  -0.084336          0.330934             0.234732                 1.000000           -0.129906
+Item average error        0.780281         -0.213274            -0.145836                -0.129906            1.000000

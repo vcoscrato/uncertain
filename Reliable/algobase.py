@@ -193,7 +193,7 @@ class ReliableAlgoBase(object):
 
         return self.trainset.global_mean
 
-    def test(self, testset, build_correlation=False, verbose=False):
+    def test(self, testset, verbose=False):
         """Test the algorithm on given testset, i.e. estimate all the ratings
         in the given testset.
 
@@ -217,41 +217,9 @@ class ReliableAlgoBase(object):
                                     r_ui_trans,
                                     verbose=verbose)
                        for (uid, iid, r_ui_trans) in testset]
-
-        if build_correlation:
-            uids = np.unique([i.uid for i in predictions])
-            iids = np.unique([i.iid for i in predictions])
-            nu = [len(self.trainset.ir[self.trainset.to_inner_uid(uid)]) for uid in uids]
-            ni = np.empty((len(iids)))
-            avgu = [np.mean([t[1] for t in self.trainset.ur[self.trainset.to_inner_uid(uid)]]) for uid in uids]
-            avgi = np.empty((len(iids)))
-            simu = self.compute_similarities().mean(axis=0)
-            self.sim_options['user_based'] = False
-            simi = self.compute_similarities().mean(axis=0)
-            self.sim_options['user_based'] = True
-            for i, iid in enumerate(iids):
-                try:
-                    ni[i] = len(self.trainset.ir[self.trainset.to_inner_iid(iid)])
-                    avgi[i] = np.mean([t[1] for t in self.trainset.ir[self.trainset.to_inner_iid(iid)]])
-                except:
-                    print('a')
-                    ni[i] = 0
-                    avgi[i] = self.trainset.global_mean
-            out = np.empty((len(predictions), 7))
-            for i in range(len(predictions)):
-                out[i] = [predictions[i].rel,
-                          nu[np.where(predictions[i].uid == uids)[0][0]], ni[np.where(predictions[i].iid == iids)[0][0]],
-                          avgu[np.where(predictions[i].uid == uids)[0][0]], avgi[np.where(predictions[i].iid == iids)[0][0]],
-                          simu[self.trainset.to_inner_uid(predictions[i].uid)], simi[self.trainset.to_inner_iid(predictions[i].iid)]]
-            names = ['r_user', 'r_item', 'avg_user', 'avg_item', 'sim_user', 'sim_item']
-            corr = np.corrcoef(out, rowvar=False)[0][1:]
-            corr_dict = {}
-            for i in range(6):
-                corr_dict[names[i]] = corr[i]
-            return predictions, corr_dict
         return predictions
 
-    def rank(self, uid, n=10, iid_list=None, remove_rated=True, W=False):
+    def recommend(self, uid, n=10, iid_list=None, remove_rated=True, W=False):
         """Build a recommendation rank for a given user.
         
         Args:
@@ -280,9 +248,10 @@ class ReliableAlgoBase(object):
         
         iuid = self.trainset.to_inner_uid(uid)
         preds = [[iiid, self.estimate(iuid, iiid)] for iiid in item_set]
+        print(preds[:2])
         est = [i[1][0] for i in preds]
         sort_idx = sorted(range(len(est)), key=est.__getitem__, reverse=True)
-        rank = [[self.trainset.to_raw_iid(preds[i][0]), preds[i][1]] for i in 
+        rank = [(self.trainset.to_raw_iid(preds[i][0]), preds[i][1][0], preds[i][1][1]) for i in
                 sort_idx[:n]]
         
         if not W:
@@ -293,6 +262,10 @@ class ReliableAlgoBase(object):
             W = kendallW(ranks)
             
             return rank, W
+
+    def test_recommend(self, test):
+        out = []
+        return out
 
     def compute_similarities(self):
         """Build the similarity matrix.

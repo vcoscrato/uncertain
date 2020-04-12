@@ -1,9 +1,0 @@
-Model RMSE: 0.912488435510671
-Model RPI: 0.4819333961067696
-Correlation reliability vs #ratings by user: 0.058148260351793934
-Correlation reliability vs #ratings to item: 0.032347174698010184
-Correlation reliability vs avg user rating: 0.18442091412925588
-Correlation reliability vs avg item rating: 0.1949327205540083
-Correlation reliability vs avg user similarity: 0.5336783691967986
-Correlation reliability vs avg item similarity: 0.2816547914335475
-Correlation reliability vs error: -0.15369794174104953
