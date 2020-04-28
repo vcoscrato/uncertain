@@ -1,6 +1,6 @@
-from .metrics import rmse, mse, mae, fcp, kendallW, build_intervals, RPI
+from .metrics import rmse, mse, mae, fcp, kendallW, build_intervals, RPI, build_quantiles
 from .algobase import ReliableAlgoBase, ReliablePrediction, ReliableRanking
-from .models import DMF, EMF, RMF
+from .models import EMF, RMF, Heuristic_reliability, Model_reliability
 from .RankingAggregation import RankingAggregation
 from .data import build_data
 

@@ -219,7 +219,7 @@ class ReliableAlgoBase(object):
                        for (uid, iid, r_ui_trans) in testset]
         return predictions
 
-    def recommend(self, uid, n=10, iid_list=None, remove_rated=True, W=False):
+    def recommend(self, uid, n=10, iid_list=None, remove_rated=True):
         """Build a recommendation rank for a given user.
         
         Args:
@@ -237,35 +237,20 @@ class ReliableAlgoBase(object):
                 estimated rating and reliability std. The list is in decreasing
                 order of preference.
         """
+        iuid = self.trainset.to_inner_uid(uid)
         if iid_list:
             item_set = [self.trainset.to_inner_iid(i) for i in iid_list]
         else:
-            item_set = self.trainset.all_items()
-            
+            item_set = list(self.trainset.all_items())
+
         if remove_rated:
-            item_set = [i for i in item_set if i not in 
-                        [i[0] for i in self.trainset.ur[0]]]
-        
-        iuid = self.trainset.to_inner_uid(uid)
+            item_set = [i for i in item_set if i not in [i[0] for i in self.trainset.ur[0]]]
+
         preds = [[iiid, self.estimate(iuid, iiid)] for iiid in item_set]
-        print(preds[:2])
         est = [i[1][0] for i in preds]
         sort_idx = sorted(range(len(est)), key=est.__getitem__, reverse=True)
-        rank = [(self.trainset.to_raw_iid(preds[i][0]), preds[i][1][0], preds[i][1][1]) for i in
-                sort_idx[:n]]
-        
-        if not W:
-            return rank
-        else:
-            rank_items = [r[0] for r in rank]
-            ranks = [i.rank('1', iid_list=rank_items) for i in self.models]
-            W = kendallW(ranks)
-            
-            return rank, W
-
-    def test_recommend(self, test):
-        out = []
-        return out
+        rank = [(self.trainset.to_raw_iid(preds[i][0]), preds[i][1][0], preds[i][1][1]) for i in sort_idx[:n]]
+        return rank
 
     def compute_similarities(self):
         """Build the similarity matrix.

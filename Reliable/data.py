@@ -5,6 +5,11 @@ from sklearn.model_selection import train_test_split
 def build_data(name='ml-100k', test_size=0.1, random_state=0):
     data = Dataset.load_builtin(name)
     users = [a[0] for a in data.raw_ratings]
+    if name == 'jester':
+        uid, ucount = np.unique(users, return_counts=True)
+        relevant_users = list(uid[[a[0] for a in np.argwhere(ucount > 10)]])
+        data.raw_ratings = [a for a in data.raw_ratings if a[0] in relevant_users]
+        users = [a[0] for a in data.raw_ratings]
     train, test = train_test_split(data.raw_ratings, shuffle=True, random_state=random_state, test_size=test_size, stratify=users)
     data.raw_ratings = train
     test = [test[:3] for test in test]

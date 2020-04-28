@@ -19,6 +19,7 @@ from collections import defaultdict
 import numpy as np
 from six import iteritems
 from scipy.stats import t
+from tqdm import tqdm
 
 
 def rmse(predictions, verbose=False):
@@ -215,27 +216,6 @@ def misscalibration(n, predictions, verbose=False):
     return out, hot, err, sd, p, t_p, conf
 
 
-def build_intervals(predictions, bins=20, step=0.1, verbose=False):
-    predictions = [predictions[i] for i in np.argsort([p.rel for p in predictions])]
-    n = len(predictions)
-    est = [p.est for p in predictions]
-    rel = [p.rel for p in predictions]
-    y = [p.true_r for p in predictions]
-    w = np.zeros((20))
-    for b in range(bins):
-        idx = range(int((b/bins)*n), int((b+1/bins)*n))
-        est_, rel_, y_ = est[idx], rel[idx], y[idx]
-        p = 0
-        while(p < 0.95):
-            w[b] += 0.01
-            inside = 0
-            for est, rel, y in zip(est_, rel_, y_):
-                if abs(est - y) < w[b]:
-                    inside += 1
-            p = inside/len(idx)
-    return w
-
-
 def build_intervals(predictions, bins=20):
     predictions = [predictions[i] for i in np.argsort([p.rel for p in predictions])]
     n = len(predictions)
@@ -253,11 +233,22 @@ def build_intervals(predictions, bins=20):
     return w
 
 
+def build_quantiles(predictions):
+    quantiles = np.linspace(start=0, stop=0.95, num=20, endpoint=True)
+    out = []
+    for q in quantiles:
+        q_ = np.quantile([a.rel for a in predictions], q)
+        predictions_ = [a for a in predictions if a.rel > q_]
+        out.append(rmse(predictions_))
+    return out
+
+
 def min_max(array):
     min = array.min()
     max = array.max()
     transformed = (array - min) / (max - min)
     return transformed
+
 
 def RPI(predictions):
     err = np.array([np.abs(pred.est - pred.r_ui) for pred in predictions])
@@ -270,3 +261,36 @@ def RPI(predictions):
     sigma_rel = rel_deviation.__abs__().mean()
     RPI = (err*err_deviation*rel_deviation).mean()/(sigma_err*sigma_rel*MAE)
     return RPI
+
+def _cumstd(array):
+    out = np.zeros(len(array))
+    out[0] = 0
+    for i in range(1, len(array)):
+        out[i] = np.std(array[:i+1])
+    return out
+
+def precision_recall_RRI(data, test, model, max_K):
+    users = np.unique([d[0] for d in data.raw_ratings])
+    user_is_relevant_at_k = np.zeros((len(users), max_K))
+    user_n_relevant_total = np.empty(len(users))
+    avg_reliability_at_k = np.zeros(max_K)
+    std_reliability_at_k = np.zeros(max_K)
+    for idxu, u in enumerate(tqdm(users)):
+        recommendation = model.recommend(u, max_K)
+        relevant_items = [t[1] for t in test if t[0] == u and t[2] >= 4]
+        user_n_relevant_total[idxu] = len(relevant_items)
+        reliabilities = [r[2] for r in recommendation]
+        avg_reliability_at_k += np.array(reliabilities).cumsum() / range(1, max_K + 1)
+        std_reliability_at_k += _cumstd(reliabilities)
+        for idxr, r in enumerate(recommendation):
+            if user_n_relevant_total[idxu] != 0:
+                if r[0] in relevant_items:
+                    user_is_relevant_at_k[idxu, idxr] = r[2]
+    avg_reliability_at_k /= len(users)
+    std_reliability_at_k /= len(users)
+    avg_precision_at_k = (user_is_relevant_at_k != 0).cumsum(axis=1).mean(axis=0)/np.arange(1, 21)
+    avg_recall_at_k = np.nanmean((user_is_relevant_at_k!=0).cumsum(axis=1)/user_n_relevant_total[:, np.newaxis], axis=0)
+    reliability_deviations = user_is_relevant_at_k - (user_is_relevant_at_k!=0)*avg_reliability_at_k[np.newaxis, :]
+    norm_deviation_at_k = (reliability_deviations.cumsum(axis=1) / std_reliability_at_k[np.newaxis, :]).sum(axis=0)
+    RRI_at_k = norm_deviation_at_k / (user_is_relevant_at_k != 0).cumsum(axis=1).sum(axis=0)
+    return avg_precision_at_k, avg_recall_at_k, RRI_at_k, user_is_relevant_at_k, reliability_deviations
