@@ -1,0 +1,31 @@
+print('Comparing models through recommendation metrics')
+f, ax = plt.subplots(figsize=(10, 5))
+avg_precision_at_k, avg_recall_at_k, RRI_at_k, user_is_relevant_at_k, reliability_deviations = func(data, test, wrapper_linear)
+ax.plot(range(1, max_K+1), avg_precision_at_k, 'b-', label='Precision@K')
+ax.plot(range(1, max_K+1), avg_recall_at_k, 'y-+', label='Recall@K')
+ax.set_xticks(range(1, max_K+1))
+ax.set_xlabel('K', Fontsize=20, labelpad=10)
+ax.set_ylabel('Metric@K', Fontsize=20)
+ax.legend()
+f.tight_layout()
+f.savefig(path + 'model_based/precision_recall.pdf')
+a = user_is_relevant_at_k != 0
+'''
+k = 1
+a.cumsum(axis=1)[:, k].sum() / ((k+1) * 943)
+reliability_deviations[:, k][reliability_deviations[:, k] != 0]
+'''
+
+f, ax = plt.subplots(figsize=(10, 5))
+ax.plot(range(2, max_K+1), RRI_at_k[1:], 'g-', label='Linear')
+avg_precision_at_k, avg_recall_at_k, RRI_at_k, user_is_relevant_at_k, reliability_deviations = func(data, test, wrapper_NMF)
+ax.plot(range(2, max_K+1), RRI_at_k[1:], 'r-+', label='NMF')
+ax.set_xticks(range(2, max_K+1))
+ax.set_xlabel('K', Fontsize=20, labelpad=10)
+ax.set_ylabel('RRI@K', Fontsize=20)
+ax.legend()
+f.tight_layout()
+f.savefig(path + 'RRI_at_k.pdf')
+'''
+reliability_deviations[:, k][reliability_deviations[:, k] != 0]
+'''
