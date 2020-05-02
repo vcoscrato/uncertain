@@ -3,48 +3,72 @@ import matplotlib.pyplot as plt
 import pickle
 from copy import deepcopy
 from pandas import DataFrame as df
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedKFold, train_test_split
 
-#Reliable is a package built on top of surprise to deal with recommendations with reliability level
+# Reliable is a package built on top of surprise to deal with recommendations with reliability level
 from Reliable.models import EMF, RMF, Model_reliability, Heuristic_reliability
-from Reliable.data import build_data
-from Reliable.metrics import RPI, rmse, build_intervals, build_quantiles
+from Reliable.metrics import RPI, rmse, build_intervals, build_quantiles, precision, recall, RRI
 from surprise.prediction_algorithms import BaselineOnly
 from surprise.prediction_algorithms import SVD, NMF
 from surprise.accuracy import rmse as srmse
+from surprise import Dataset
+from surprise.reader import Reader
 
 # Parameters
-dataset = 'ml-100k'
+dataset = 'ml-10m'
 path = 'Results/' + dataset + '/'
 random_state = 0
 SVD_params = {'n_factors': 10, 'n_epochs': 200, 'lr_all': .005,
               'reg_all': .1, 'init_std_dev': 1, 'random_state': random_state}
 u_ratio = 1
-max_size = 2
+max_size = 20
 Linear_params = {'method': 'sgd', 'reg': 0, 'learning_rate': .005, 'epochs': 200}
 NMF_params = {'n_factors': 10, 'n_epochs': 200, 'reg_pu': .1, 'reg_qi': .1,
               'init_low': 0, 'init_high': 1, 'random_state': random_state}
 cv_folds = 2
 max_K = 20
-n_negatives = 4
 
-'''
-with open(path+'fitted/R.pkl', 'rb') as f:
-    R = pickle.load(f)
 
-models = {}
-with open(path+'fitted/EMF.pkl', 'rb') as f:
-    models['EMF'] = pickle.load(f)
+def build_data(name, test_size, random_state=0):
+    if name == 'ml-10m':
+        read = Reader(sep='::')
+        data = Dataset.load_from_file('data/ml-10m/ratings.dat', read)
+    else:
+        data = Dataset.load_builtin(name)
+    users = [a[0] for a in data.raw_ratings]
+    if name == 'jester':
+        uid, ucount = np.unique(users, return_counts=True)
+        relevant_users = list(uid[[a[0] for a in np.argwhere(ucount > 10)]])
+        data.raw_ratings = [a for a in data.raw_ratings if a[0] in relevant_users]
+        users = [a[0] for a in data.raw_ratings]
+    train, test = train_test_split(data.raw_ratings, shuffle=True, random_state=random_state, test_size=test_size, stratify=users)
+    data.raw_ratings = train
+    test = [test[:3] for test in test]
+    # Delete a few test items that are not in the training set
+    train_items = np.unique([train[1] for train in train])
+    for i in np.unique([test[1] for test in test]):
+        if i not in train_items:
+            for id in reversed(np.argwhere(np.array([test[1] for test in test]) == i)):
+                del test[id[0]]
+    return data, test
 
-with open(path+'fitted/RMF.pkl', 'rb') as f:
-    models['RMF'] = pickle.load(f)
 
-with open(path+'fitted/Linear.pkl', 'rb') as f:
-    models['Linear'] = pickle.load(f)
-    
-with open(path+'fitted/NMF.pkl', 'rb') as f:
-    models['NMF'] = pickle.load(f) 
-'''
+def metricsatk(recommendations):
+    precisionatk = np.empty(max_K)
+    recallatk = np.empty(max_K)
+    RRIatk = np.empty(max_K)
+    recommendations_ = []
+    for idx in range(len(recommendations)):
+        recommendations_.append(([], recommendations[idx][1]))
+        print(recommendations[idx][1])
+    for k in range(max_K):
+        for idx in range(len(recommendations)):
+            recommendations_[idx][0].append(recommendations[idx][0][k])
+        precisionatk[k] = precision(recommendations_)
+        recallatk[k] = recall(recommendations_)
+        RRIatk[k] = RRI(recommendations_)
+    return precisionatk, recallatk, RRIatk
+
 
 if __name__ == '__main__':
 
@@ -53,6 +77,7 @@ if __name__ == '__main__':
     trainset = data.build_full_trainset()
     models = {}
     preds = {}
+    recommendations = {}
     print('DONE!')
 
     print('Fitting rating estimator...', end=' ')
@@ -66,6 +91,7 @@ if __name__ == '__main__':
     print('Fitting heuristic strategic...', end= '')
     models['Heuristic'] = Heuristic_reliability(R, u_ratio=u_ratio)
     preds['Heuristic'] = models['Heuristic'].test(test)
+    #recommendations['Heuristic'] = models['Heuristic'].test_recommend(test, n=20, njobs=2)
     models['Heuristic'].RPI = RPI(preds['Heuristic'])
     print('Fitted with RPI = {}.'.format(models['Heuristic'].RPI))
 
@@ -73,11 +99,13 @@ if __name__ == '__main__':
     models['EMF'] = EMF(initial_model=deepcopy(R), minimum_improvement=-1, max_size=max_size, verbose=True)
     models['EMF'].fit(test)
     preds['EMF'] = models['EMF'].test(test)
+    #recommendations['EMF'] = models['EMF'].test_recommend(test, n=20, njobs=2)
     with open(path+'fitted/EMF.pkl', 'wb') as f:
         pickle.dump(models['EMF'], f, pickle.HIGHEST_PROTOCOL)
     models['RMF'] = RMF(initial_model=deepcopy(R), resample_size=0.8, minimum_improvement=-1, max_size=max_size, verbose=True)
     models['RMF'].fit(test)
     preds['RMF'] = models['RMF'].test(test)
+    #recommendations['RMF'] = models['RMF'].test_recommend(test, n=20, njobs=2)
     with open(path+'fitted/RMF.pkl', 'wb') as f:
         pickle.dump(models['RMF'], f, pickle.HIGHEST_PROTOCOL)
 
@@ -127,6 +155,7 @@ if __name__ == '__main__':
     E_linear.fit(data_.build_full_trainset())
     models['Linear'] = Model_reliability(R, E_linear, trainset)
     preds['Linear'] = models['Linear'].test(test)
+    #recommendations['Linear'] = models['Linear'].test_recommend(test, n=20, njobs=2)
     models['Linear'].RMSE = rmse(preds['Linear'])
     models['Linear'].ERMSE = srmse(E_linear.test(test_error), verbose=False)
     models['Linear'].RPI = RPI(preds['Linear'])
@@ -137,6 +166,7 @@ if __name__ == '__main__':
     E_NMF = NMF(**NMF_params).fit(data_.build_full_trainset())
     models['NMF'] = Model_reliability(R, E_NMF, trainset)
     preds['NMF'] = models['NMF'].test(test)
+    #recommendations['NMF'] = models['NMF'].test_recommend(test, n=20, njobs=2)
     models['NMF'].RMSE = rmse(preds['NMF'])
     models['NMF'].ERMSE = srmse(E_NMF.test(test_error), verbose=False)
     models['NMF'].RPI = RPI(preds['NMF'])
@@ -173,9 +203,8 @@ if __name__ == '__main__':
     intervals = list(map(build_intervals, preds.values()))
     aes = ['r-', 'g-', 'b-', 'y-', 'm-']
     f, ax = plt.subplots(figsize=(10, 5))
-    for id, key in enumerate(preds.keys()):
-        print(id, key)
-        ax.plot(range(1, 21), intervals[id], aes[id], label=key)
+    for idx, key in enumerate(preds.keys()):
+        ax.plot(range(1, 21), intervals[idx], aes[idx], label=key)
     ax.set_xlabel('Reliability bin', Fontsize=20, labelpad=10)
     ax.set_ylabel('Interval half width', Fontsize=20)
     ax.set_xticks(range(1, 21))
@@ -188,16 +217,41 @@ if __name__ == '__main__':
     q = np.linspace(start=0.95, stop=0, num=20, endpoint=True)
     aes = ['r-', 'g-', 'b-', 'y-', 'm-']
     f, ax = plt.subplots(figsize=(10, 5))
-    for id, key in enumerate(preds.keys()):
-        print(id, key)
-        ax.plot(range(1, 21), quantiles[id], aes[id], label=key)
+    for idx, key in enumerate(preds.keys()):
+        ax.plot(range(1, 21), quantiles[idx], aes[idx], label=key)
     ax.set_xlabel('Reliability bin', Fontsize=20, labelpad=10)
     ax.set_ylabel('RMSE', Fontsize=20)
     ax.set_xticks(range(1, 21))
     plt.legend()
     f.tight_layout()
     f.savefig(path + 'quantiles.pdf')
-'''
+
+    '''
+    print('Comparing models through recommendation metrics')
+    recommendation_metrics = list(map(metricsatk, recommendations.values()))
+    f, ax = plt.subplots(figsize=(10, 5))
+    ax.plot(range(1, max_K + 1), recommendation_metrics[0][0], 'b-', label='Precision@K Base')
+    ax.plot(range(1, max_K + 1), recommendation_metrics[0][1], 'y-+', label='Recall@K Base')
+    ax.plot(range(1, max_K + 1), recommendation_metrics[1][0], 'r-', label='Precision@K Ensemble')
+    ax.plot(range(1, max_K + 1), recommendation_metrics[1][1], 'g-+', label='Recall@K Ensemble')
+    ax.set_xticks(range(1, max_K + 1))
+    ax.set_xlabel('K', Fontsize=20, labelpad=10)
+    ax.set_ylabel('Metric@K', Fontsize=20)
+    ax.legend()
+    f.tight_layout()
+    f.savefig(path + 'precision_recall.pdf')
+
+    f, ax = plt.subplots(figsize=(10, 5))
+    aes = ['r-', 'g-', 'b-', 'y-', 'm-']
+    for idx, key in enumerate(models.keys()):
+        ax.plot(range(1, max_K + 1), recommendation_metrics[idx][2], aes[idx], label=key)
+    ax.set_xticks(range(1, max_K + 1))
+    ax.set_xlabel('K', Fontsize=20, labelpad=10)
+    ax.set_ylabel('RRI@K', Fontsize=20)
+    ax.legend()
+    f.tight_layout()
+    f.savefig(path + 'RRI_at_k.pdf')
+
     # User analysis
     bu = models['DMF'].SVDrel.bu
     ur = [[a[1] for a in b] for b in pretrain.trainset.ur.values()]
@@ -228,4 +282,4 @@ if __name__ == '__main__':
     eval = df(np.corrcoef((bi, ni, avgi, stdi, simi, erri)), index=names)
     eval.columns = names
     print(eval.to_string())
-'''
+    '''

@@ -8,14 +8,14 @@ from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 
 import numpy as np
+from functools import partial
+from multiprocessing import Pool
 from surprise import PredictionImpossible
 from surprise import similarities as sims
-from .metrics import kendallW
 from collections import namedtuple
 
 
-class ReliablePrediction(namedtuple('Prediction',
-                                     ['uid', 'iid', 'r_ui', 'est', 'rel', 'details'])):
+class ReliablePrediction(namedtuple('Prediction', ['uid', 'iid', 'r_ui', 'est', 'rel', 'details'])):
     """A named tuple for storing the results of a reliable prediction.
     It's wrapped in a class, but only for documentation and printing purposes.
     Args:
@@ -45,7 +45,7 @@ class ReliablePrediction(namedtuple('Prediction',
         return s
 
 
-class ReliableRanking(namedtuple('Ranking', ['uid', 'iid', 'avg_rank', 'rel', 'w'])):
+class ReliableRecommendation(namedtuple('Recommendation', ['iid', 'est', 'rel', 'is_rel'])):
     __slots__ = ()
 
     def __str__(self):
@@ -219,7 +219,7 @@ class ReliableAlgoBase(object):
                        for (uid, iid, r_ui_trans) in testset]
         return predictions
 
-    def recommend(self, uid, n=10, iid_list=None, remove_rated=True):
+    def recommend(self, uid, n=20, iid_list=None, remove_rated=True, test=None):
         """Build a recommendation rank for a given user.
         
         Args:
@@ -249,8 +249,30 @@ class ReliableAlgoBase(object):
         preds = [[iiid, self.estimate(iuid, iiid)] for iiid in item_set]
         est = [i[1][0] for i in preds]
         sort_idx = sorted(range(len(est)), key=est.__getitem__, reverse=True)
-        rank = [(self.trainset.to_raw_iid(preds[i][0]), preds[i][1][0], preds[i][1][1]) for i in sort_idx[:n]]
-        return rank
+        recommendation = [ReliableRecommendation(self.trainset.to_raw_iid(preds[i][0]), preds[i][1][0],
+                                                 preds[i][1][1], False) for i in sort_idx[:n]]
+        if test:
+            test_u_items = [t[1] for t in test if t[0] == uid and t[2] >= 4]
+            n_relevant = len(test_u_items)
+            for idx, r in enumerate(recommendation):
+                if r.iid in test_u_items:
+                    recommendation[idx] = ReliableRecommendation(recommendation[idx][0], recommendation[idx][1],
+                                                                 recommendation[idx][2], True)
+            return recommendation, n_relevant
+        return recommendation
+
+    def test_recommend(self, test, n, njobs=2):
+        test = [t for t in test if t[2] >= 4]
+        users = np.unique([d[0] for d in test])
+        raw_id = np.empty((len(users), n), dtype=str)
+        is_relevant = np.full((len(users), n), False, dtype=bool)
+        estimates = np.empty((len(users), n))
+        reliabilities = np.empty((len(users), n))
+        pool = Pool(njobs)
+        recommendations = pool.map(partial(self.recommend, n=n, test=test), iterable=users)
+        pool.close()
+        pool.join()
+        return recommendations
 
     def compute_similarities(self):
         """Build the similarity matrix.

@@ -59,7 +59,7 @@ class EMF(ReliableAlgoBase):
         rmse1 = 0
         while rmse1 < (rmse0*(1-self.minimum_improvement)) and self.ensemble_size < self.max_size:
             self.ensemble_size += 1
-            self.initial_model.random_state += 1
+            self.initial_model.random_state += 999
             self.initial_model.sgd(self.trainset)
             self.models.append((self.initial_model.bu, self.initial_model.bi,
                                 self.initial_model.pu, self.initial_model.qi))
@@ -124,6 +124,8 @@ class RMF(ReliableAlgoBase):
                 sample = np.random.binomial(1, self.resample_size, len(ur))
                 del_i = [ur[j][0] for j in range(len(ur)) if sample[j] == False]
                 for i in del_i:
+                    #if len(self.trainset.ir[i]) == 1:
+                    #    continue
                     del self.trainset.ur[u][[a[0] for a in self.trainset.ur[u]].index(i)]
                     del self.trainset.ir[i][[a[0] for a in self.trainset.ir[i]].index(u)]
             self.initial_model.sgd(self.trainset)
