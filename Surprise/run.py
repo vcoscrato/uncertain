@@ -21,7 +21,7 @@ random_state = 0
 SVD_params = {'n_factors': 10, 'n_epochs': 200, 'lr_all': .005,
               'reg_all': .1, 'init_std_dev': 1, 'random_state': random_state}
 u_ratio = 1
-max_size = 20
+max_size = 10
 Linear_params = {'method': 'sgd', 'reg': 0, 'learning_rate': .005, 'epochs': 200}
 NMF_params = {'n_factors': 10, 'n_epochs': 200, 'reg_pu': .1, 'reg_qi': .1,
               'init_low': 0, 'init_high': 1, 'random_state': random_state}

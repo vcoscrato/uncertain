@@ -15,11 +15,7 @@ def min_max(array):
     transformed = (array - min) / (max - min)
     return transformed
 
-def build_coo_matrix(ratings_list):
-    users = [r[0] for r in ratings_list]
-    items = [r[1] for r in ratings_list]
-    ratings = [r[2] for r in ratings_list]
-    return coo_matrix((ratings, (users, items)))
+
 
 def RRI_at_k(model, test_interactions, k=5):
     ranks = model.predict_rank(test_)
