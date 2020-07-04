@@ -10,21 +10,29 @@ from spotlight.interactions import Interactions
 from spotlight.evaluation import precision_recall_score, rmse_score
 
 from Utils.utils import dataset_loader, BiasNet
-from Utils.trash import EnsembleRecommender, ResampleRecommender, ModelWrapper
-from Utils.metrics import rpi_score, rri_score, graphs_score, precision_recall_rri_score
+from Utils.models import EnsembleRecommender, ResampleRecommender, ModelWrapper
+from Utils.metrics import epi_score, eri_score, graphs_score, precision_recall_eri_score
 
 # Parameters
-dataset = '100K'
+dataset = '20M'
 path = 'Results/' + dataset + '/'
 random_state = 0
 #MF_params = {'embedding_dim': 20, 'n_iter': 20, 'l2': 2e-4, 'learning_rate': 5e-4,
 #             'use_cuda': True, 'batch_size': 256, 'random_state': 0}
-MF_params = {'embedding_dim': 20, 'n_iter': 20, 'l2': 1e-7, 'learning_rate': 1e-3,
-             'use_cuda': True, 'batch_size': 256, 'random_state': 0}
+MF_params = {'embedding_dim': 50, 'n_iter': 1, 'l2': 2e-4, 'learning_rate': 3e-2,
+             'use_cuda': True, 'batch_size': 2048, 'random_state': 0}
 n_models = 10
 k = np.arange(1, 11)
 
+
+
 '''
+train, test = dataset_loader(dataset)
+model = ExplicitFactorizationModel(**MF_params)
+for i in range(200):
+    model.fit(train)
+    print(i, rmse_score(model, test))
+    
 train, test = dataset_loader(dataset)
 model = ExplicitFactorizationModel(**MF_params)
 for i in range(50):
@@ -32,7 +40,7 @@ for i in range(50):
     print(i, rmse_score(model, test))
 
 with open(path+'fitted/R.pkl', 'rb') as f:
-    R = pickle.load(f)
+    R = pickle. load(f)
 
 with open(path+'fitted/ensemble.pkl', 'rb') as f:
     ensemble = pickle.load(f)
@@ -56,7 +64,7 @@ if __name__ == '__main__':
     print('Fitting rating estimator...', end=' ')
     base_model = ExplicitFactorizationModel(**MF_params)
     R = deepcopy(base_model)
-    R.fit(train)
+    R.fit(train, verbose=True)
     R.rmse = rmse_score(R, test)
     p, r = precision_recall_score(R, test, train, k)
     R.precision = p.mean(axis=0)
@@ -68,11 +76,11 @@ if __name__ == '__main__':
     print('Fitting Ensemble Models...', end=' ')
     ensemble = EnsembleRecommender(R, n_models)
     ensemble.fit(train, test)
-    p, r, rri = precision_recall_rri_score(ensemble, test, train, k)
+    p, r, eri = precision_recall_eri_score(ensemble, test, train, k)
     ensemble.precision = p.mean(axis=0)
     ensemble.recall = r.mean(axis=0)
-    ensemble.rri = np.nanmean(rri, axis=0)
-    ensemble.quantiles, ensemble.intervals = graphs_score(ensemble, test)
+    ensemble.eri = np.nanmean(eri, axis=0)
+    ensemble.quantiles, ensemble.intervals = graphs_score(ensemble.predict(test.user_ids, test.item_ids), test.ratings)
     with open(path+'fitted/ensemble.pkl', 'wb') as f:
         pickle.dump(ensemble, f, pickle.HIGHEST_PROTOCOL)
     print('DONE!')
@@ -80,8 +88,8 @@ if __name__ == '__main__':
     ax[0].plot(range(1, n_models+1), ensemble.rmse, 'b-', label='Ensemble')
     ax[0].plot(range(1, n_models+1), [ensemble.rmse[0]] * n_models, 'b--', label='Baseline')
     ax[0].set_xlabel('Number of models', Fontsize=20, labelpad=10)
-    ax[0].set_xticks(k)
-    ax[0].set_xticklabels(k)
+    ax[0].set_xticks(range(1, n_models+1))
+    ax[0].set_xticklabels(range(1, n_models+1))
     ax[0].set_ylabel('RMSE', Fontsize=20)
     ax[0].legend()
     ax[1].plot(k, ensemble.precision, 'r-', label='Ensemble precision')
@@ -99,8 +107,8 @@ if __name__ == '__main__':
     print('Fitting Resample Models...', end=' ')
     resample = ResampleRecommender(R, n_models)
     resample.fit(train, test)
-    resample.rri = np.nanmean(rri_score(resample, test, train, k), axis=0)
-    resample.quantiles, resample.intervals = graphs_score(resample, test)
+    resample.eri = np.nanmean(eri_score(resample, test, train, k), axis=0)
+    resample.quantiles, resample.intervals = graphs_score(resample.predict(test.user_ids, test.item_ids), test.ratings)
     with open(path+'fitted/resample.pkl', 'wb') as f:
         pickle.dump(resample, f, pickle.HIGHEST_PROTOCOL)
     print('DONE!')
@@ -127,10 +135,10 @@ if __name__ == '__main__':
     error_mf.fit(train_errors)
     error_mf.rmse = rmse_score(error_mf, test_errors)
     double = ModelWrapper(rating_estimator=R, error_estimator=error_mf)
-    double.fit(train)
-    double.rpi = rpi_score(double, test)
-    double.rri = np.nanmean(rri_score(double, test, train, k), axis=0)
-    double.quantiles, double.intervals = graphs_score(double, test)
+    preds = double.predict(test.user_ids, test.item_ids)
+    double.epi = epi_score(preds, test.ratings)
+    double.eri = np.nanmean(eri_score(double, test, train, k), axis=0)
+    double.quantiles, double.intervals = graphs_score(preds, test.ratings)
     with open(path+'fitted/double.pkl', 'wb') as f:
         pickle.dump(double, f, pickle.HIGHEST_PROTOCOL)
     print('DONE!')
@@ -142,17 +150,17 @@ if __name__ == '__main__':
     error_linear.fit(train_errors)
     error_linear.rmse = rmse_score(error_linear, test_errors)
     linear = ModelWrapper(rating_estimator=R, error_estimator=error_linear)
-    linear.fit(train)
-    linear.rpi = rpi_score(linear, test)
-    linear.rri = np.nanmean(rri_score(linear, test, train, k), axis=0)
-    linear.quantiles, linear.intervals = graphs_score(linear, test)
+    preds = linear.predict(test.user_ids, test.item_ids)
+    linear.epi = epi_score(preds, test.ratings)
+    linear.eri = np.nanmean(eri_score(linear, test, train, k), axis=0)
+    linear.quantiles, linear.intervals = graphs_score(preds, test.ratings)
     with open(path+'fitted/linear.pkl', 'wb') as f:
         pickle.dump(linear, f, pickle.HIGHEST_PROTOCOL)
     print('DONE!')
 
     print('Comparing all the methods...')
     eval = df({'RMSE': [ensemble.rmse[-1]]+[R.rmse]*3, 'Error RMSE': [0]*2+[double.ermse, linear.ermse],
-               'RPI': [ensemble.rpi[-1], resample.rpi[-1], double.rpi, linear.rpi]},
+               'EPI': [ensemble.epi[-1], resample.epi[-1], double.epi, linear.epi]},
               index=['Ensemble', 'Resample', 'Double', 'Linear'])
     eval.round(4).to_csv(path + 'comparison.txt', index=True, header=True)
 
@@ -163,7 +171,7 @@ if __name__ == '__main__':
     ax[0].plot(np.arange(1, 21), linear.quantiles, 'k-', label='Linear')
     ax[0].set_xticks(np.arange(1, 21))
     ax[0].set_xticklabels(np.round(np.linspace(start=0, stop=1, num=21, endpoint=True), 2))
-    ax[0].set_xlabel('Reliability quantile', Fontsize=20)
+    ax[0].set_xlabel('Error bin', Fontsize=20)
     ax[0].set_ylabel('RMSE', Fontsize=20)
     ax[0].legend()
     ax[1].plot(np.arange(1, 21), ensemble.intervals, 'b-', label='Ensemble')
@@ -172,17 +180,17 @@ if __name__ == '__main__':
     ax[1].plot(np.arange(1, 21), linear.intervals, 'k-', label='Linear')
     ax[1].set_xticks(np.arange(1, 21))
     ax[1].set_xticklabels(np.arange(1, 21))
-    ax[1].set_xlabel('Reliability quantile', Fontsize=20)
+    ax[1].set_xlabel('Error bin', Fontsize=20)
     ax[1].set_ylabel(r'$\epsilon$', Fontsize=20)
     ax[1].legend()
-    ax[2].plot(k, ensemble.rri, 'b-', label='Ensemble')
-    ax[2].plot(k, resample.rri, 'g-', label='Resample')
-    ax[2].plot(k, double.rri, 'r-', label='Double')
-    ax[2].plot(k, linear.rri, 'k-', label='Linear')
+    ax[2].plot(k, ensemble.eri, 'b-', label='Ensemble')
+    ax[2].plot(k, resample.eri, 'g-', label='Resample')
+    ax[2].plot(k, double.eri, 'r-', label='Double')
+    ax[2].plot(k, linear.eri, 'k-', label='Linear')
     ax[2].set_xticks(k)
     ax[2].set_xticklabels(k)
     ax[2].set_xlabel('K', Fontsize=20)
-    ax[2].set_ylabel('RRI@K', Fontsize=20)
+    ax[2].set_ylabel('ERI@K', Fontsize=20)
     ax[2].legend()
     f.tight_layout()
     f.savefig(path + 'comparison.pdf')
@@ -211,3 +219,15 @@ if __name__ == '__main__':
     eval = df(eval, index=['RMSE', 'ERMSE', 'RPI'])
     print('Metrics for ratings in [4, 5]: \n {}'.format(eval.T, '\n'))
     '''
+
+    f, ax = plt.subplots(figsize=(10, 5))
+    ax.plot(k, ensemble.eri, 'b-', label='Ensemble')
+    ax.plot(k, resample.eri, 'g-', label='Resample')
+    ax.plot(k, double.eri, 'r-', label='Double')
+    ax.plot(k, linear.eri, 'k-', label='Linear')
+    ax.set_xticks(k)
+    ax.set_xticklabels(k)
+    ax.set_xlabel('K', Fontsize=20)
+    ax.set_ylabel('URI@K', Fontsize=20)
+    ax.legend()
+    f.tight_layout()

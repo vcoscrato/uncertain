@@ -1,7 +1,7 @@
 import numpy as np
 from copy import deepcopy
 from spotlight.cross_validation import random_train_test_split as split
-from .metrics import rpi_score, rmse_rpi_score, rri_score, graphs_score
+from .metrics import rmse_score, epi_score
 from spotlight.factorization._components import _predict_process_ids
 
 
@@ -11,16 +11,16 @@ class EnsembleRecommender(object):
         self.models = [base_model]
         self.n_models = n_models
         self.rmse = [base_model.rmse]
-        self.rpi = [0]
+        self.epi = [0]
 
     def fit(self, train, test):
         for i in range(1, self.n_models):
             self.models.append(deepcopy(self.models[0]))
             self.models[i]._initialize(train)
             self.models[i].fit(train)
-            metrics = rmse_rpi_score(self, test)
-            self.rmse.append(metrics[0])
-            self.rpi.append(metrics[1])
+            preds = self.predict(test.user_ids, test.item_ids)
+            self.rmse.append(rmse_score(preds[0], test.ratings))
+            self.epi.append(epi_score(preds, test.ratings))
 
     def predict(self, user_ids, item_ids=None):
         self.models[0]._check_input(user_ids, item_ids, allow_items_none=True)
@@ -33,8 +33,8 @@ class EnsembleRecommender(object):
             model._net.train(False)
             predictions[:, idx] = model._net(user_ids, item_ids).detach().cpu().numpy()
         estimates = predictions.mean(axis=1)
-        reliabilities = 1 / predictions.std(axis=1)
-        return estimates, reliabilities
+        errors = predictions.std(axis=1)
+        return estimates, errors
 
 
 class ResampleRecommender(object):
@@ -43,7 +43,7 @@ class ResampleRecommender(object):
         self.base_model = base_model
         self.models = []
         self.n_models = n_models
-        self.rpi = [0]
+        self.epi = [0]
 
     def fit(self, train, test):
         for i in range(self.n_models):
@@ -52,7 +52,7 @@ class ResampleRecommender(object):
             self.models[i]._initialize(train_)
             self.models[i].fit(train_)
             if len(self.models) > 1:
-                self.rpi.append(rpi_score(self, test))
+                self.epi.append(epi_score(self.predict(test.user_ids, test.item_ids), test.ratings))
         return self
 
     def predict(self, user_ids, item_ids=None):
@@ -66,8 +66,8 @@ class ResampleRecommender(object):
             model._net.train(False)
             predictions[:, idx] = model._net(user_ids, item_ids).detach().cpu().numpy()
         estimates = self.base_model._net(user_ids, item_ids).detach().cpu().numpy()
-        reliabilities = 1 / predictions.std(axis=1)
-        return estimates, reliabilities
+        errors = predictions.std(axis=1)
+        return estimates, errors
 
 
 class ModelWrapper(object):
@@ -79,5 +79,5 @@ class ModelWrapper(object):
 
     def predict(self, user_ids, item_ids=None):
         estimates = self.R.predict(user_ids, item_ids)
-        reliabilities = 1 / np.maximum(self.E.predict(user_ids, item_ids), 0.1)
-        return estimates, reliabilities
+        errors = np.maximum(self.E.predict(user_ids, item_ids), 0)
+        return estimates, errors
