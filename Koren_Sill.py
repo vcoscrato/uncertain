@@ -3,6 +3,7 @@ Factorization models for explicit feedback problems.
 """
 
 import numpy as np
+from pandas import factorize
 
 import torch
 import torch.nn as nn
@@ -12,7 +13,7 @@ from spotlight.helpers import _repr_model
 from spotlight.factorization._components import _predict_process_ids
 
 from spotlight.torch_utils import gpu
-from Utils.metrics import rmse_score, epi_score, eri_score, graphs_score, precision_recall_eri_score
+from Utils.metrics import rmse_score, rpi_score, rri_score, graphs_score, precision_recall_rri_score
 
 
 class KorenSillNet(nn.Module):
@@ -32,7 +33,7 @@ class KorenSillNet(nn.Module):
         self.item_biases.weight.data.zero_()
 
         self.user_betas = nn.Embedding(num_users, num_labels-1)
-        self.user_betas.weight.data.uniform_()
+        self.user_betas.weight.data.zero_()
 
     def forward(self, user_ids, item_ids):
 
@@ -45,7 +46,7 @@ class KorenSillNet(nn.Module):
 
         user_beta = self.user_betas(user_ids)
         user_beta[:, 1:] = torch.exp(user_beta[:, 1:])
-        user_distribution = 1 / (1 + torch.exp(y - user_beta.cumsum(1)))
+        user_distribution = torch.div(1, 1 + torch.exp(y - user_beta.cumsum(1)))
 
         ones = torch.ones((len(user_distribution), 1), device=user_beta.device)
         user_distribution = torch.cat((user_distribution, ones), 1)
@@ -62,12 +63,14 @@ class KorenSill(object):
                  n_iter,
                  batch_size,
                  learning_rate,
+                 weight_decay,
                  use_cuda):
 
         self._embedding_dim = embedding_dim
         self._n_iter = n_iter
         self._learning_rate = learning_rate
         self._batch_size = batch_size
+        self._weight_decay = weight_decay
         self._use_cuda = use_cuda
 
         self._num_users = None
@@ -95,7 +98,7 @@ class KorenSill(object):
          self._rating_labels) = (interactions.num_users,
                                  interactions.num_items,
                                  len(interactions.ratings),
-                                 np.unique(interactions.ratings))
+                                 gpu(torch.from_numpy(np.unique(interactions.ratings)), self._use_cuda))
 
         self._net = gpu(KorenSillNet(self._num_users,
                                      self._num_items,
@@ -106,7 +109,7 @@ class KorenSill(object):
         self._optimizer = optim.Adam(
             self._net.parameters(),
             lr=self._learning_rate,
-            weight_decay=1.5e-6
+            weight_decay=self._weight_decay
             )
 
         self.train_loss = []
@@ -122,15 +125,21 @@ class KorenSill(object):
 
         if test:
             self.test_loss = []
-            test_ratings = torch.from_numpy(test.ratings - 1).long()
+            test_users = gpu(torch.from_numpy(test.user_ids.astype(np.int64)), self._use_cuda)
+            test_items = gpu(torch.from_numpy(test.item_ids.astype(np.int64)), self._use_cuda)
+            test_ratings = gpu(torch.from_numpy(factorize(test.ratings, sort=True)[0]), self._use_cuda)
 
         user_ids_tensor = gpu(torch.from_numpy(interactions.user_ids.astype(np.int64)), self._use_cuda)
         item_ids_tensor = gpu(torch.from_numpy(interactions.item_ids.astype(np.int64)), self._use_cuda)
-        ratings_tensor = gpu((torch.from_numpy(interactions.ratings) - 1).long(), self._use_cuda)
+        ratings_tensor = gpu(torch.from_numpy(factorize(interactions.ratings, sort=True)[0]), self._use_cuda)
 
         for epoch_num in range(self._n_iter):
 
             self.train_loss.append(0)
+            idx = torch.randperm(self._num_ratings)
+            user_ids_tensor = user_ids_tensor[idx]
+            item_ids_tensor = item_ids_tensor[idx]
+            ratings_tensor = ratings_tensor[idx]
 
             for i in range(0, self._num_ratings, self._batch_size):
 
@@ -145,15 +154,20 @@ class KorenSill(object):
 
                 self.train_loss[-1] += loss.item()
 
+            self.train_loss[-1] /= len(range(0, self._num_ratings, self._batch_size))
+
             if test:
-                predictions = model.predict(test.user_ids, test.item_ids)
-                self.test_loss.append(self._loss(test_ratings, predictions))
+                self._net.train(False)
+                predictions = self._net(test_users, test_items)
+                self.test_loss.append(self._loss(test_ratings, predictions).item())
 
             if verbose:
-                print('Epoch loss: ', (self.train_loss[-1], self.test_loss[-1]))
+                if test:
+                    print('Epoch {} loss: '.format(epoch_num+1), (self.train_loss[-1], self.test_loss[-1]))
+                else:
+                    print('Epoch {} loss: '.format(epoch_num + 1), (self.train_loss[-1]))
 
-
-    def predict(self, user_ids, item_ids=None):
+    def predict(self, user_ids, item_ids=None, dist=False):
 
         self._net.train(False)
 
@@ -163,27 +177,63 @@ class KorenSill(object):
 
         out = self._net(user_ids, item_ids)
 
-        return out.cpu().detach().numpy()
+        if dist:
+            return out.cpu().detach().numpy()
+
+        # Most probable rating
+        #mean = self._rating_labels[(out.argmax(1))]
+        #confidence = out.max(1)[0]
+
+        # Average ranking
+        mean = (out * self._rating_labels).sum(1)
+        var = ((out * self._rating_labels**2).sum(1) - mean**2).abs()
+        confidence = var.max() - var
+
+        return mean.cpu().detach().numpy(), confidence.cpu().detach().numpy()
 
     def evaluate(self, test, train):
 
         preds = self.predict(test.user_ids, test.item_ids)
-        #point_pred = (np.argmax(preds, axis=1) + 1).astype(float)
-        point_pred = (preds * self._rating_labels).sum(1)
 
-        self.rmse = rmse_score(point_pred, test.ratings)
-        self.epi = epi_score(preds, test.ratings)
+        self.rmse = rmse_score(preds[0], test.ratings)
+        self.rpi = rpi_score(preds, test.ratings)
         self.quantiles, self.intervals = graphs_score(preds, test.ratings)
 
-        p, r, e = precision_recall_eri_score(self, test, train, np.arange(1, 11))
+        p, r, e = precision_recall_rri_score(self, test, train, np.arange(1, 11))
         self.precision = p.mean(axis=0)
         self.recall = r.mean(axis=0)
-        self.eri = np.nanmean(e, axis=0)
+        self.rri = np.nanmean(e, axis=0)
 
 
 from Utils.utils import dataset_loader
-train, test = dataset_loader('1M')
+dataset = '10M'
+train, test = dataset_loader(dataset)
+if dataset == '1M':
+    wd = 2.5e-6
+    n_inter = 100
+    lr = 0.02
+elif dataset == '10M':
+    wd = 5e-7
+    n_inter = 100
+    lr = 0.02
+else:
+    wd = 1e-7
+    n_inter = 20
 
-model = KorenSill(embedding_dim=200, n_iter=30, learning_rate=.05, batch_size=100000, use_cuda=True)
+model = KorenSill(embedding_dim=50, n_iter=n_inter, learning_rate=lr, batch_size=100000, weight_decay=wd, use_cuda=True)
 model.fit(train, test, verbose=True)
+model.evaluate(test, train)
+print(model.rmse, model.rpi)
+print(model.precision)
+print(model.rri)
 
+
+self = model
+preds = model.predict(test.user_ids, test.item_ids)
+user_ids, item_ids = _predict_process_ids(test.user_ids, test.item_ids,
+                                          self._num_items,
+                                          self._use_cuda)
+out = model._net(user_ids, item_ids).detach()
+mean = (out * self._rating_labels).sum(1)
+var = (out * self._rating_labels**2).sum(1) - mean**2
+confidence = var.max() - var

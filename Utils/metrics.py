@@ -7,18 +7,18 @@ def rmse_score(predictions, ratings):
     return np.sqrt(((ratings - predictions) ** 2).mean())
 
 
-def epi_score(predictions, ratings):
+def rpi_score(predictions, ratings):
 
-    predictions, epsilons = predictions
+    predictions, confidence = predictions
     errors = np.abs(predictions - ratings)
 
     MAE = errors.mean()
     error_deviations = errors - MAE
-    epsilon_deviations = epsilons - epsilons.mean()
+    confidence_deviations = confidence.mean() - confidence
     errors_std = np.abs(error_deviations).mean()
-    epsilon_std = np.abs(epsilon_deviations).mean()
+    epsilon_std = np.abs(confidence_deviations).mean()
 
-    return (errors*error_deviations*epsilon_deviations).mean()/(errors_std*epsilon_std*MAE)
+    return (errors*error_deviations*confidence_deviations).mean()/(errors_std*epsilon_std*MAE)
 
 
 def graphs_score(predictions, ratings):
@@ -38,7 +38,7 @@ def graphs_score(predictions, ratings):
     return np.array(rmse), np.array(width)
 
 
-def _get_eri(predictions, reliabilities, avg_rel, std_rel, targets, k):
+def _get_rri(predictions, reliabilities, avg_rel, std_rel, targets, k):
 
     predictions = predictions[:k]
     reliabilities = reliabilities[:k]
@@ -46,12 +46,12 @@ def _get_eri(predictions, reliabilities, avg_rel, std_rel, targets, k):
     num_hit = float(len(hit))
     if num_hit == 0:
         return np.nan
-    deviations = avg_rel - reliabilities[np.isin(predictions, hit)]
+    deviations = reliabilities[np.isin(predictions, hit)] - avg_rel
 
     return (deviations.sum() / std_rel) / num_hit
 
 
-def eri_score(model, test, train=None, k=10):
+def rri_score(model, test, train=None, k=10):
 
     reliabilities = model.predict(test.user_ids, test.item_ids)[1]
     avg_reliability, std_reliability = reliabilities.mean(), reliabilities.std()
@@ -68,7 +68,7 @@ def eri_score(model, test, train=None, k=10):
     if train is not None:
         train = train.tocsr()
 
-    eri = []
+    rri = []
 
     for user_id, row in enumerate(test_):
 
@@ -85,17 +85,17 @@ def eri_score(model, test, train=None, k=10):
         predictions = predictions.argsort()
         targets = row.indices
 
-        user_eri = [
-            _get_eri(predictions, reliabilities, avg_reliability, std_reliability, targets, x) for x in k]
+        user_rri = [
+            _get_rri(predictions, reliabilities, avg_reliability, std_reliability, targets, x) for x in k]
 
-        eri.append(user_eri)
+        rri.append(user_rri)
 
-    eri = np.array(eri).squeeze()
+    rri = np.array(rri).squeeze()
 
-    return eri
+    return rri
 
 
-def _get_precision_recall_eri(predictions, reliabilities, avg_rel, std_rel, targets, k):
+def _get_precision_recall_rri(predictions, reliabilities, avg_rel, std_rel, targets, k):
 
     predictions = predictions[:k]
     reliabilities = reliabilities[:k]
@@ -103,21 +103,22 @@ def _get_precision_recall_eri(predictions, reliabilities, avg_rel, std_rel, targ
     num_hit = float(len(hit))
     if num_hit == 0:
         return 0, 0, np.nan
-    deviations = avg_rel - reliabilities[np.isin(predictions, hit)]
+    deviations = reliabilities[np.isin(predictions, hit)] - avg_rel
 
     return num_hit / len(predictions), num_hit / len(targets), (deviations.sum() / std_rel) / num_hit
 
 
-def precision_recall_eri_score(model, test, train=None, k=10):
-
-    reliabilities = model.predict(test.user_ids, test.item_ids)[1]
-    avg_reliability, std_reliability = reliabilities.mean(), reliabilities.std()
+def precision_recall_rri_score(model, test, train=None, k=10):
 
     idx = test.ratings >= 4
     test_ = deepcopy(test)
     test_.user_ids = test_.user_ids[idx]
     test_.item_ids = test_.item_ids[idx]
     test_.ratings = test_.ratings[idx]
+
+    reliabilities = model.predict(test_.user_ids, test_.item_ids)[1]
+    avg_reliability, std_reliability = reliabilities.mean(), reliabilities.std()
+
     test_ = test_.tocsr()
     if train is not None:
         train = train.tocsr()
@@ -127,7 +128,7 @@ def precision_recall_eri_score(model, test, train=None, k=10):
 
     precision = []
     recall = []
-    eri = []
+    rri = []
 
     for user_id, row in enumerate(test_):
 
@@ -145,17 +146,17 @@ def precision_recall_eri_score(model, test, train=None, k=10):
 
         targets = row.indices
 
-        user_precision, user_recall, user_eri = zip(*[
-            _get_precision_recall_eri(predictions, reliabilities, avg_reliability, std_reliability, targets, x)
+        user_precision, user_recall, user_rri = zip(*[
+            _get_precision_recall_rri(predictions, reliabilities, avg_reliability, std_reliability, targets, x)
             for x in k
         ])
 
         precision.append(user_precision)
         recall.append(user_recall)
-        eri.append(user_eri)
+        rri.append(user_rri)
 
     precision = np.array(precision).squeeze()
     recall = np.array(recall).squeeze()
-    eri = np.array(eri).squeeze()
+    rri = np.array(rri).squeeze()
 
-    return precision, recall, eri
+    return precision, recall, rri

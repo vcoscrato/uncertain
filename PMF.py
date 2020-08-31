@@ -73,29 +73,6 @@ class PMF(object):
     def _initialized(self):
         return self._net is not None
 
-    def _check_input(self, user_ids, item_ids, allow_items_none=False):
-
-        if isinstance(user_ids, int):
-            user_id_max = user_ids
-        else:
-            user_id_max = user_ids.max()
-
-        if user_id_max >= self._num_users:
-            raise ValueError('Maximum user id greater '
-                             'than number of users in model.')
-
-        if allow_items_none and item_ids is None:
-            return
-
-        if isinstance(item_ids, int):
-            item_id_max = item_ids
-        else:
-            item_id_max = item_ids.max()
-
-        if item_id_max >= self._num_items:
-            raise ValueError('Maximum item id greater '
-                             'than number of items in model.')
-
     def _initialize(self, interactions):
 
         (self._num_users,
@@ -114,6 +91,8 @@ class PMF(object):
             lr=self._learning_rate
             )
 
+        self.train_loss = []
+
     def _mse(self, observed_ratings, predicted_ratings):
 
         assert_no_grad(observed_ratings)
@@ -127,16 +106,27 @@ class PMF(object):
 
         return penalty_u + penalty_v
 
-    def fit(self, interactions, verbose=False):
+    def fit(self, interactions, test, verbose=False):
 
         if not self._initialized:
             self._initialize(interactions)
+            if test:
+                self.test_loss = []
 
         user_ids_tensor = gpu(torch.from_numpy(interactions.user_ids.astype(np.int64)), self._use_cuda)
         item_ids_tensor = gpu(torch.from_numpy(interactions.item_ids.astype(np.int64)), self._use_cuda)
         ratings_tensor = gpu(torch.from_numpy(interactions.ratings), self._use_cuda)
 
         for epoch_num in range(self._n_iter):
+
+            idx = np.arange(0, self._num_ratings)
+            np.random.shuffle(idx)
+            idx = gpu(torch.tensor(idx), self._use_cuda)
+            user_ids_tensor = user_ids_tensor[idx]
+            item_ids_tensor = item_ids_tensor[idx]
+            ratings_tensor = ratings_tensor[idx]
+
+            self.train_loss.append(0)
 
             for i in range(0, self._num_ratings, self._batch_size):
 
@@ -146,20 +136,27 @@ class PMF(object):
                                         item_ids_tensor[i:i + self._batch_size])
 
                 loss = self._mse(ratings_tensor[i:i + self._batch_size], predictions)
+                self.train_loss[-1] += loss.item()
                 loss += self._add_penalty(len(user_ids_tensor[i:i + self._batch_size]))
                 loss.backward()
                 self._optimizer.step()
 
-    def predict(self, user_ids, item_ids=None):
+            self.train_loss[-1] /= self._num_ratings
+            if test:
+                predictions = model.predict(test.user_ids, test.item_ids)
+                loss = self._mse(torch.tensor(test.ratings), torch.tensor(predictions))
+                self.test_loss.append(loss.item()/len(test.ratings))
 
-        self._check_input(user_ids, item_ids, allow_items_none=True)
+            if verbose:
+                print('{}-th epoch loss: '.format(epoch_num), (self.train_loss[-1], self.test_loss[-1]))
+
+    def predict(self, user_ids, item_ids=None):
 
         self._net.train(False)
 
         user_ids, item_ids = _predict_process_ids(user_ids, item_ids,
                                                   self._num_items,
                                                   self._use_cuda)
-        print(user_ids, user_ids)
 
         out = self._net(user_ids, item_ids)
 
@@ -176,16 +173,10 @@ class PMF(object):
 
 
 from Utils.utils import dataset_loader
-train, test = dataset_loader('1M')
+train, test = dataset_loader('100K')
 
-model = PMF(embedding_dim=50, n_iter=1, lambda_u=6, lambda_v=6, learning_rate=.1, batch_size=1000000, use_cuda=True)
-train_rmse = []
-test_rmse = []
-for i in range(100):
-    model.fit(train, verbose=True)
-    if (i+1) % 10 == 0:
-        train_rmse.append(rmse_score(model, train))
-        test_rmse.append(rmse_score(model, test))
+model = PMF(embedding_dim=50, n_iter=200, lambda_u=.5, lambda_v=.5, learning_rate=.001, batch_size=8196, use_cuda=True)
+model.fit(train, test, verbose=True)
 model.evaluate(test, train)
-print(train_rmse)
-print(test_rmse)
+
+
