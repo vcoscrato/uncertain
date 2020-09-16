@@ -84,3 +84,24 @@ def generate_netflix():
         pickle.dump(data, f, pickle.HIGHEST_PROTOCOL)
 
     return 'Success!'
+
+
+def load_models(path):
+    models = {}
+    with open(path + 'fitted/R.pkl', 'rb') as f:
+        models['R'] = pickle.load(f)
+    with open(path + 'fitted/empirical.pkl', 'rb') as f:
+        models['Empirical'] = pickle.load(f)
+    with open(path + 'fitted/ensemble.pkl', 'rb') as f:
+        models['Ensemble'] = pickle.load(f)
+    with open(path + 'fitted/resample.pkl', 'rb') as f:
+        models['Resample'] = pickle.load(f)
+    with open(path + 'fitted/CPMF.pkl', 'rb') as f:
+        models['CPMF'] = pickle.load(f)
+    with open(path + 'fitted/KorenSill.pkl', 'rb') as f:
+        models['OrdRec'] = pickle.load(f)
+    with open(path + 'fitted/double.pkl', 'rb') as f:
+        models['Double'] = pickle.load(f)
+    with open(path + 'fitted/linear.pkl', 'rb') as f:
+        models['Linear'] = pickle.load(f)
+    return models

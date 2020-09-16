@@ -30,7 +30,7 @@ def graphs_score(predictions, ratings):
     width = []
 
     for idx in range(1, 21):
-        ind = np.bitwise_and(quantiles[idx-1] < epsilons, epsilons < quantiles[idx])
+        ind = np.bitwise_and(quantiles[idx-1] <= epsilons, epsilons <= quantiles[idx])
         errors = np.abs(predictions[ind] - ratings[ind])
         rmse.append(np.sqrt(np.square(errors).mean()))
         width.append(np.quantile(errors, 0.95))

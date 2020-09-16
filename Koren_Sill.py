@@ -18,7 +18,7 @@ from Utils.metrics import rmse_score, rpi_score, rri_score, graphs_score, precis
 
 class KorenSillNet(nn.Module):
 
-    def __init__(self, num_users, num_items, num_labels, embedding_dim=32):
+    def __init__(self, num_users, num_items, num_labels, embedding_dim):
 
         super().__init__()
 
@@ -41,7 +41,6 @@ class KorenSillNet(nn.Module):
         item_embedding = self.item_embeddings(item_ids).squeeze()
 
         item_bias = self.item_biases(item_ids).squeeze()
-
         y = ((user_embedding * item_embedding).sum(1) + item_bias).reshape(-1, 1)
 
         user_beta = self.user_betas(user_ids)
@@ -63,14 +62,14 @@ class KorenSill(object):
                  n_iter,
                  batch_size,
                  learning_rate,
-                 weight_decay,
+                 l2,
                  use_cuda):
 
         self._embedding_dim = embedding_dim
         self._n_iter = n_iter
         self._learning_rate = learning_rate
         self._batch_size = batch_size
-        self._weight_decay = weight_decay
+        self._l2 = l2
         self._use_cuda = use_cuda
 
         self._num_users = None
@@ -105,11 +104,19 @@ class KorenSill(object):
                                      len(self._rating_labels),
                                      self._embedding_dim),
                         self._use_cuda)
-
+        '''
         self._optimizer = optim.Adam(
             self._net.parameters(),
             lr=self._learning_rate,
-            weight_decay=self._weight_decay
+            weight_decay=self._l2
+            )
+        '''
+        self._optimizer = torch.optim.Adam(
+            [{'params': self._net.user_embeddings.parameters(), 'weight_decay': self._l2},
+             {'params': self._net.item_embeddings.parameters(), 'weight_decay': self._l2},
+             {'params': self._net.item_biases.parameters(), 'weight_decay': self._l2},
+             {'params': self._net.user_betas.parameters(), 'weight_decay': self._l2}],
+            lr=self._learning_rate
             )
 
         self.train_loss = []
@@ -187,9 +194,9 @@ class KorenSill(object):
         # Average ranking
         mean = (out * self._rating_labels).sum(1)
         var = ((out * self._rating_labels**2).sum(1) - mean**2).abs()
-        confidence = var.max() - var
+        #confidence = var.max() - var
 
-        return mean.cpu().detach().numpy(), confidence.cpu().detach().numpy()
+        return mean.cpu().detach().numpy(), var.cpu().detach().numpy()
 
     def evaluate(self, test, train):
 
@@ -208,26 +215,28 @@ class KorenSill(object):
 from Utils.utils import dataset_loader
 dataset = '10M'
 train, test = dataset_loader(dataset)
+train.ratings = train.ratings*2
+test.ratings = test.ratings*2
 if dataset == '1M':
-    wd = 2.5e-6
-    n_inter = 100
+    wd = 2e-6
+    n_inter = 200
     lr = 0.02
 elif dataset == '10M':
-    wd = 5e-7
-    n_inter = 100
+    wd = 1e-6
+    n_inter = 20
     lr = 0.02
 else:
     wd = 1e-7
     n_inter = 20
 
-model = KorenSill(embedding_dim=50, n_iter=n_inter, learning_rate=lr, batch_size=100000, weight_decay=wd, use_cuda=True)
+model = KorenSill(embedding_dim=50, n_iter=n_inter, learning_rate=lr, batch_size=int(1e6), l2=wd, use_cuda=True)
 model.fit(train, test, verbose=True)
 model.evaluate(test, train)
 print(model.rmse, model.rpi)
 print(model.precision)
 print(model.rri)
 
-
+'''
 self = model
 preds = model.predict(test.user_ids, test.item_ids)
 user_ids, item_ids = _predict_process_ids(test.user_ids, test.item_ids,
@@ -237,3 +246,28 @@ out = model._net(user_ids, item_ids).detach()
 mean = (out * self._rating_labels).sum(1)
 var = (out * self._rating_labels**2).sum(1) - mean**2
 confidence = var.max() - var
+'''
+
+user_embedding = model._net.user_embeddings.weight[test.user_ids]
+item_embedding = model._net.item_embeddings.weight[test.item_ids]
+item_bias = model._net.item_biases.weight[test.item_ids].squeeze()
+user_beta = model._net.user_betas.weight[test.user_ids]
+
+y = ((user_embedding * item_embedding).sum(1) + item_bias).reshape(-1, 1)
+user_beta[:, 1:] = torch.exp(user_beta[:, 1:])
+user_distribution = torch.div(1, 1 + torch.exp(y - user_beta.cumsum(1)))
+
+ones = torch.ones((len(user_distribution), 1), device=user_beta.device)
+user_distribution = torch.cat((user_distribution, ones), 1)
+
+user_distribution[:, 1:] -= user_distribution[:, :-1]
+print(user_distribution)
+print(test.ratings[10:20])
+
+mean = (user_distribution * model._rating_labels).sum(1)
+var = ((user_distribution * model._rating_labels ** 2).sum(1) - mean ** 2)
+from matplotlib import pyplot as plt
+f, ax = plt.subplots(figsize=(10, 5))
+ax.plot(var.cpu().detach().numpy(), mean.cpu().detach().numpy(), 'o', markersize=2)
+ax.set_ylabel('Predicted')
+ax.set_xlabel('Variance')

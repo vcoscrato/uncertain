@@ -9,7 +9,53 @@ from spotlight.helpers import _repr_model
 from spotlight.factorization._components import _predict_process_ids
 from spotlight.torch_utils import gpu
 
-from .metrics import rmse_score, rpi_score, graphs_score, precision_recall_rri_score, _get_precision_recall_rri
+from .metrics import rmse_score, rpi_score, graphs_score, precision_recall_rri_score, _get_precision_recall_rri, rri_score
+
+
+class EmpiricalMeasures(object):
+    def __init__(self, base_model):
+        self.base_model = base_model
+        self.user_support = None
+        self.item_support = None
+        self.user_variance = None
+        self.correlation, self.rpi = {}, {}
+        self.precision, self.recall, self.rri = {}, {}, {}
+        self.quantiles, self.intervals = {}, {}
+        self.type = None
+
+    def fit(self, train):
+        train = train.tocsr()
+        self.user_support = train.getnnz(1).astype(np.float32)
+        self.item_support = train.getnnz(0).astype(np.float32)
+        square = train.copy();
+        square.data **= 2
+        self.user_variance = (np.array(square.mean(1)).flatten() - np.array(train.mean(1)).flatten() ** 2)
+
+    def predict(self, user_ids, item_ids=None):
+        user_ids_, item_ids_ = _predict_process_ids(user_ids, item_ids,
+                                                  self.base_model._num_items, False)
+        if self.type == 'user_support':
+            return self.base_model.predict(user_ids, item_ids), self.user_support[user_ids_]
+        elif self.type == 'item_support':
+            return self.base_model.predict(user_ids, item_ids), self.item_support[item_ids_]
+        elif self.type == 'user_variance':
+            return self.base_model.predict(user_ids, item_ids), self.user_variance[user_ids_]
+        else:
+            Exception('type must be one of ("user_support", "item_support", "user_variance").')
+
+    def evaluate(self, test, train, k):
+
+        for type in ["user_support", "item_support", "user_variance"]:
+            self.type = type
+            predictions = self.predict(test.user_ids, test.item_ids)
+            self.rpi[type] = rpi_score(predictions, test.ratings)
+            error = np.abs(test.ratings - predictions[0])
+            self.correlation[type] = pearsonr(error, predictions[1]), spearmanr(error, predictions[1])
+            p, r, rri = precision_recall_rri_score(self, test, train, k)
+            self.precision[type] = p.mean(axis=0)
+            self.recall[type] = r.mean(axis=0)
+            self.rri[type] = np.nanmean(rri, axis=0)
+            self.quantiles[type], self.intervals[type] = graphs_score(predictions, test.ratings)
 
 
 class EnsembleRecommender(object):
@@ -25,9 +71,9 @@ class EnsembleRecommender(object):
             self.models.append(deepcopy(self.models[0]))
             self.models[i]._initialize(train)
             self.models[i].fit(train)
-            preds = self.predict(test.user_ids, test.item_ids)
-            self.rmse.append(rmse_score(preds[0], test.ratings))
-            self.rpi.append(rpi_score(preds, test.ratings))
+            predictions = self.predict(test.user_ids, test.item_ids)
+            self.rmse.append(rmse_score(predictions[0], test.ratings))
+            self.rpi.append(rpi_score(predictions, test.ratings))
 
     def predict(self, user_ids, item_ids=None):
         self.models[0]._check_input(user_ids, item_ids, allow_items_none=True)
@@ -42,6 +88,16 @@ class EnsembleRecommender(object):
         estimates = predictions.mean(axis=1)
         errors = predictions.std(axis=1)
         return estimates, errors
+    
+    def evaluate(self, test, train, k):
+        predictions = self.predict(test.user_ids, test.item_ids)
+        error = np.abs(test.ratings - predictions[0])
+        self.correlation = pearsonr(error, predictions[1]), spearmanr(error, predictions[1])
+        p, r, rri = precision_recall_rri_score(self, test, train, k)
+        self.precision = p.mean(axis=0)
+        self.recall = r.mean(axis=0)
+        self.rri = np.nanmean(rri, axis=0)
+        self.quantiles, self.intervals = graphs_score(predictions, test.ratings)
 
 
 class ResampleRecommender(object):
@@ -75,6 +131,13 @@ class ResampleRecommender(object):
         estimates = self.base_model._net(user_ids, item_ids).detach().cpu().numpy()
         errors = predictions.std(axis=1)
         return estimates, errors
+    
+    def evaluate(self, test, train, k):
+        predictions = self.predict(test.user_ids, test.item_ids)
+        error = np.abs(test.ratings - predictions[0])
+        self.correlation = pearsonr(error, predictions[1]), spearmanr(error, predictions[1])
+        self.rri = np.nanmean(rri_score(self, test, train, k), axis=0)
+        self.quantiles, self.intervals = graphs_score(predictions, test.ratings)
 
 
 class ModelWrapper(object):
@@ -88,6 +151,14 @@ class ModelWrapper(object):
         estimates = self.R.predict(user_ids, item_ids)
         errors = np.maximum(self.E.predict(user_ids, item_ids), 0)
         return estimates, errors
+    
+    def evaluate(self, test, train, k):
+        predictions = self.predict(test.user_ids, test.item_ids)
+        error = np.abs(test.ratings - predictions[0])
+        self.correlation = pearsonr(error, predictions[1]), spearmanr(error, predictions[1])
+        self.rpi = rpi_score(predictions, test.ratings)
+        self.rri = np.nanmean(rri_score(self, test, train, k), axis=0)
+        self.quantiles, self.intervals = graphs_score(predictions, test.ratings)
 
 
 class KorenSillNet(torch.nn.Module):
@@ -137,14 +208,14 @@ class KorenSill(object):
                  n_iter,
                  batch_size,
                  learning_rate,
-                 weight_decay,
+                 l2,
                  use_cuda):
 
         self._embedding_dim = embedding_dim
         self._n_iter = n_iter
         self._learning_rate = learning_rate
         self._batch_size = batch_size
-        self._weight_decay = weight_decay
+        self._l2 = l2
         self._use_cuda = use_cuda
 
         self._num_users = None
@@ -183,8 +254,18 @@ class KorenSill(object):
         self._optimizer = torch.optim.Adam(
             self._net.parameters(),
             lr=self._learning_rate,
-            weight_decay=self._weight_decay
+            weight_decay=self._l2
             )
+
+        '''
+        self._optimizer = torch.optim.Adam(
+            [{'params': self._net.user_embeddings.parameters(), 'weight_decay': self._l2},
+             {'params': self._net.item_embeddings.parameters(), 'weight_decay': self._l2},
+             {'params': self._net.item_biases.parameters(), 'weight_decay': self._l2},
+             {'params': self._net.user_betas.parameters(), 'weight_decay': 0.1}],
+            lr=self._learning_rate
+            )
+        '''
 
         self.train_loss = []
 
@@ -261,17 +342,18 @@ class KorenSill(object):
         # Average ranking
         mean = (out * self._rating_labels).sum(1)
         var = ((out * self._rating_labels**2).sum(1) - mean**2).abs()
-        confidence = var.max() - var
 
-        return mean.cpu().detach().numpy(), confidence.cpu().detach().numpy()
+        return mean.cpu().detach().numpy(), var.cpu().detach().numpy()
 
     def evaluate(self, test, train):
 
-        preds = self.predict(test.user_ids, test.item_ids)
+        predictions = self.predict(test.user_ids, test.item_ids)
+        error = np.abs(test.ratings - predictions[0])
+        self.correlation = pearsonr(error, predictions[1]), spearmanr(error, predictions[1])
 
-        self.rmse = rmse_score(preds[0], test.ratings)
-        self.rpi = rpi_score(preds, test.ratings)
-        self.quantiles, self.intervals = graphs_score(preds, test.ratings)
+        self.rmse = rmse_score(predictions[0], test.ratings)
+        self.rpi = rpi_score(predictions, test.ratings)
+        self.quantiles, self.intervals = graphs_score(predictions, test.ratings)
 
         p, r, e = precision_recall_rri_score(self, test, train, np.arange(1, 11))
         self.precision = p.mean(axis=0)
@@ -424,76 +506,19 @@ class CPMF(object):
 
         out = self._net(user_ids, item_ids)
 
-        return out[0].cpu().detach().numpy().flatten(), 1 / np.sqrt(out[1].cpu().detach().numpy().flatten())
+        return out[0].cpu().detach().numpy().flatten(), np.sqrt(out[1].cpu().detach().numpy().flatten())
 
     def evaluate(self, test, train):
 
-        preds = self.predict(test.user_ids, test.item_ids)
-        self.rmse = rmse_score(preds[0], test.ratings)
-        self.rpi = rpi_score(preds, test.ratings)
-        self.quantiles, self.intervals = graphs_score(preds, test.ratings)
+        predictions = self.predict(test.user_ids, test.item_ids)
+        error = np.abs(test.ratings - predictions[0])
+        self.correlation = pearsonr(error, predictions[1]), spearmanr(error, predictions[1])
 
-        df = pd.DataFrame(data={'user': test.user_ids, 'item': test.item_ids, 'error': np.square(preds[0] - test.ratings)})
-        user_rmse = df.groupby('user').mean()['error']
-        user_var = self._net.user_gammas.weight.data.cpu().detach()[torch.LongTensor(user_rmse.index)].numpy().flatten()
-        user_rmse = np.array(user_rmse)
-        self.user_rmse_var_corr = (pearsonr(user_rmse, user_var)[0], spearmanr(user_rmse, user_var)[0])
+        self.rmse = rmse_score(predictions[0], test.ratings)
+        self.rpi = rpi_score(predictions, test.ratings)
+        self.quantiles, self.intervals = graphs_score(predictions, test.ratings)
 
-        item_rmse = df.groupby('item').mean()['error']
-        item_var = self._net.item_gammas.weight.data.cpu().detach()[torch.LongTensor(item_rmse.index)].numpy().flatten()
-        item_rmse = np.array(item_rmse)
-        self.item_rmse_var_corr = (pearsonr(item_rmse, item_var)[0], spearmanr(item_rmse, item_var)[0])
-
-        idx = test.ratings >= 4
-        test_ = deepcopy(test)
-        test_.user_ids = test_.user_ids[idx]
-        test_.item_ids = test_.item_ids[idx]
-        test_.ratings = test_.ratings[idx]
-        #preds = self.predict(test_.user_ids, test_.item_ids)
-        test_ = test_.tocsr()
-        train_ = train.tocsr()
-
-        avg_reliability, std_reliability = preds[1].mean(), preds[1].std()
-        print(avg_reliability, std_reliability)
-        k = np.arange(1, 11)
-
-        uid = []
-        precision = []
-        recall = []
-        rri = []
-
-        for user_id, row in enumerate(test_):
-
-            if not len(row.indices):
-                continue
-
-            predictions, reliabilities = self.predict(user_id)
-            predictions *= -1
-
-            rated = train_[user_id].indices
-            predictions[rated] = np.infty
-
-            predictions = predictions.argsort()
-
-            targets = row.indices
-
-            user_precision, user_recall, user_rri = zip(*[
-                _get_precision_recall_rri(predictions, reliabilities, avg_reliability, std_reliability, targets, x)
-                for x in k
-            ])
-
-            uid.append(user_id)
-            precision.append(user_precision)
-            recall.append(user_recall)
-            rri.append(user_rri)
-
-        precision = np.array(precision).squeeze()
-        recall = np.array(recall).squeeze()
-        self.rri = np.nanmean(np.array(rri).squeeze(), 0)
-
-        map = precision[:, 9].flatten()
-        user_var = self._net.user_gammas.weight.data.cpu().detach()[torch.LongTensor(uid)].numpy().flatten()
-        self.user_map_var_corr = (pearsonr(map, user_var)[0], spearmanr(map, user_var)[0])
-
-        self.precision = precision.mean(0)
-        self.recall = recall.mean(0)
+        p, r, e = precision_recall_rri_score(self, test, train, np.arange(1, 11))
+        self.precision = p.mean(axis=0)
+        self.recall = r.mean(axis=0)
+        self.rri = np.nanmean(e, axis=0)
