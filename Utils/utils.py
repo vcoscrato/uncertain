@@ -1,16 +1,13 @@
 import numpy as np
 from spotlight.datasets import amazon, goodbooks, movielens
 from spotlight.cross_validation import random_train_test_split as split
-from spotlight.evaluation import rmse_score
 from spotlight.interactions import Interactions
-import torch.nn as nn
-from spotlight.layers import ZeroEmbedding, ScaledEmbedding
-import torch
+
 import gc
 import pickle
 
 
-def dataset_loader(name):
+def dataset_loader(name, seed):
     if name == 'goodbooks':
         data = goodbooks.get_goodbooks_dataset()
     elif name == 'amazon':
@@ -20,25 +17,8 @@ def dataset_loader(name):
             data = pickle.load(f)
     else:
         data = movielens.get_movielens_dataset(name)
-    train, test = split(data, random_state=np.random.RandomState(0), test_percentage=0.1)
+    train, test = split(data, random_state=np.random.RandomState(seed), test_percentage=0.1)
     return train, test
-
-
-class BiasNet(nn.Module):
-
-    def __init__(self, num_users, num_items, sparse=False):
-
-        super(BiasNet, self).__init__()
-
-        self.user_biases = ZeroEmbedding(num_users, 1, sparse=sparse)
-        self.item_biases = ZeroEmbedding(num_items, 1, sparse=sparse)
-
-    def forward(self, user_ids, item_ids):
-
-        user_bias = self.user_biases(user_ids).squeeze()
-        item_bias = self.item_biases(item_ids).squeeze()
-
-        return user_bias + item_bias
 
 
 def generate_netflix():
@@ -86,19 +66,55 @@ def generate_netflix():
     return 'Success!'
 
 
+def set_params(dataset):
+
+    multi_model_size = 10
+    k = np.arange(1, 11)
+
+    if dataset == '1M':
+        MF_params = {'embedding_dim': 50, 'n_iter': 200, 'l2': 2e-5, 'learning_rate': 0.02,
+                     'batch_size': int(1e6), 'use_cuda': True, 'random_state': 0}
+        CPMF_params = {'embedding_dim': 50, 'n_iter': 200, 'sigma': 0.05, 'learning_rate': 0.02,
+                       'batch_size': int(1e6), 'use_cuda': True}
+        OrdRec_params = {'embedding_dim': 50, 'n_iter': 200, 'l2': 2e-6, 'learning_rate': 0.02,
+                         'batch_size': int(1e6), 'use_cuda': True}
+
+    elif dataset == '10M':
+        MF_params = {'embedding_dim': 50, 'n_iter': 200, 'l2': 2e-5, 'learning_rate': 0.02,
+                     'batch_size': int(1e6), 'use_cuda': True, 'random_state': 0}
+        CPMF_params = {'embedding_dim': 50, 'n_iter': 200, 'sigma': 0.05, 'learning_rate': 0.02,
+                       'batch_size': int(1e6), 'use_cuda': True}
+        OrdRec_params = {'embedding_dim': 50, 'n_iter': 200, 'l2': 2e-6, 'learning_rate': 0.02,
+                         'batch_size': int(1e6), 'use_cuda': True}
+
+    else:
+        MF_params = {'embedding_dim': 50, 'n_iter': 200, 'l2': 2e-5, 'learning_rate': 0.02,
+                     'batch_size': int(1e6), 'use_cuda': True, 'random_state': 0}
+        CPMF_params = {'embedding_dim': 50, 'n_iter': 200, 'sigma': 0.05, 'learning_rate': 0.02,
+                       'batch_size': int(1e6), 'use_cuda': True}
+        OrdRec_params = {'embedding_dim': 50, 'n_iter': 200, 'l2': 2e-6, 'learning_rate': 0.02,
+                         'batch_size': int(1e6), 'use_cuda': True}
+
+    return MF_params, CPMF_params, OrdRec_params, multi_model_size, k
+
+
 def load_models(path):
     models = {}
     with open(path + 'fitted/R.pkl', 'rb') as f:
-        models['R'] = pickle.load(f)
-    with open(path + 'fitted/empirical.pkl', 'rb') as f:
-        models['Empirical'] = pickle.load(f)
+        models['Baseline'] = pickle.load(f)
+    with open(path + 'fitted/user_support.pkl', 'rb') as f:
+        models['User support'] = pickle.load(f)
+    with open(path + 'fitted/item_support.pkl', 'rb') as f:
+        models['Item support'] = pickle.load(f)
+    with open(path + 'fitted/item_variance.pkl', 'rb') as f:
+        models['User variance'] = pickle.load(f)
     with open(path + 'fitted/ensemble.pkl', 'rb') as f:
         models['Ensemble'] = pickle.load(f)
     with open(path + 'fitted/resample.pkl', 'rb') as f:
         models['Resample'] = pickle.load(f)
     with open(path + 'fitted/CPMF.pkl', 'rb') as f:
         models['CPMF'] = pickle.load(f)
-    with open(path + 'fitted/KorenSill.pkl', 'rb') as f:
+    with open(path + 'fitted/OrdRec.pkl', 'rb') as f:
         models['OrdRec'] = pickle.load(f)
     with open(path + 'fitted/double.pkl', 'rb') as f:
         models['Double'] = pickle.load(f)

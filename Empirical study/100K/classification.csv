@@ -1,0 +1,10 @@
+,Likelihood,AUC
+User support,-0.6092,0.5248
+Item support,-0.6088,0.5323
+User variance,-0.6077,0.5414
+Ensemble,-0.5652,0.6118
+Resample,-0.5974,0.6034
+CPMF,-0.6643,0.5369
+OrdRec,-0.5990,0.5649
+Double,-0.6087,0.5281
+Linear,-0.5919,0.6207

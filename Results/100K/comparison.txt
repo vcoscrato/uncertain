@@ -1,5 +1,0 @@
-,RMSE,Error RMSE,EPI
-Ensemble,3.3227,0.0,0.0765
-Resample,3.3236,0.0,0.0184
-Double,3.3236,3.0093,0.0835
-Linear,3.3236,3.0327,0.0752
