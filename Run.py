@@ -1,7 +1,7 @@
 import pickle
 import numpy as np
 from copy import deepcopy
-from os.path import exists
+from gc import collect
 
 from spotlight.cross_validation import random_train_test_split as split
 from spotlight.factorization.explicit import ExplicitFactorizationModel
@@ -9,24 +9,15 @@ from spotlight.interactions import Interactions
 from spotlight.evaluation import precision_recall_score, rmse_score
 
 from Utils.utils import dataset_loader, set_params
-from Utils.models import Empirical, Ensemble, Resample, BiasNet, ModelWrapper, CPMF, OrdRec
+#from Utils.models import Empirical, Ensemble, Resample, ModelWrapper, CPMF, OrdRec
 
 # Parameters
 dataset = '100K'
 path = 'Empirical study/' + dataset + '/'
 MF_params, CPMF_params, OrdRec_params, multi_model_size, k = set_params(dataset)
-n_replicas = 2
+n_replicas = 1
 
 FunkSVD = ExplicitFactorizationModel(**MF_params)
-base_dict = {'RMSE': np.zeros(n_replicas),
-             'Precision': np.zeros((n_replicas, len(k))),
-             'Recall': np.zeros((n_replicas, len(k)))}
-
-uncertainty_dict = {'Correlation': np.zeros((n_replicas, 2)),
-                    'EpsilonReliability': np.zeros((n_replicas, 20)),
-                    'RMSEReliability': np.zeros((n_replicas, 20)),
-                    'RPI': np.zeros(n_replicas),
-                    'RRI': np.zeros((n_replicas, len(k)))}
 
 results = {'baseline': deepcopy(base_dict),
            'user_support': deepcopy(uncertainty_dict),
@@ -44,7 +35,7 @@ if __name__ == '__main__':
     for seed in range(n_replicas):
 
         print('Replica {}:'.format(seed+1))
-        train, test = dataset_loader(dataset, seed=0)
+        train, test = dataset_loader(dataset, seed=seed)
 
         print('Fitting baseline estimator...', end=' ')
         R = deepcopy(FunkSVD)
@@ -64,6 +55,7 @@ if __name__ == '__main__':
         results['user_support']['RMSEReliability'][seed] = model.quantiles
         results['user_support']['RPI'][seed] = model.rpi
         results['user_support']['RRI'][seed] = model.rri
+        results['user_support']['Classification'] = model.classification
         model = Empirical(R, type='item_support')
         model.fit(train)
         model.evaluate(test, train, k)
@@ -72,6 +64,7 @@ if __name__ == '__main__':
         results['item_support']['RMSEReliability'][seed] = model.quantiles
         results['item_support']['RPI'][seed] = model.rpi
         results['item_support']['RRI'][seed] = model.rri
+        results['item_support']['Classification'] = model.classification
         model = Empirical(R, type='item_variance')
         model.fit(train)
         model.evaluate(test, train, k)
@@ -80,6 +73,7 @@ if __name__ == '__main__':
         results['item_variance']['RMSEReliability'][seed] = model.quantiles
         results['item_variance']['RPI'][seed] = model.rpi
         results['item_variance']['RRI'][seed] = model.rri
+        results['item_variance']['Classification'] = model.classification
         print('DONE!')
 
         model = Ensemble(R, multi_model_size)
@@ -93,6 +87,7 @@ if __name__ == '__main__':
         results['ensemble']['RMSEReliability'][seed] = model.quantiles
         results['ensemble']['RPI'][seed] = model.rpi
         results['ensemble']['RRI'][seed] = model.rri
+        results['ensemble']['Classification'] = model.classification
 
         model = Resample(R, multi_model_size)
         model.fit(train, test)
@@ -102,6 +97,7 @@ if __name__ == '__main__':
         results['resample']['RMSEReliability'][seed] = model.quantiles
         results['resample']['RPI'][seed] = model.rpi
         results['resample']['RRI'][seed] = model.rri
+        results['resample']['Classification'] = model.classification
 
         print('Building the cross-validated error data...', end=' ')
         fold1, fold2 = split(train, random_state=np.random.RandomState(0), test_percentage=0.5)
@@ -111,10 +107,10 @@ if __name__ == '__main__':
         model_cv = deepcopy(FunkSVD)
         model_cv.fit(fold2)
         predictions2 = model_cv.predict(fold1.user_ids, fold1.item_ids)
-        user_ids = np.hstack((fold2.user_ids, fold1.user_ids))
-        item_ids = np.hstack((fold2.item_ids, fold1.item_ids))
         train_errors = np.hstack((np.abs(fold2.ratings - predictions1), np.abs(fold1.ratings - predictions2)))
-        train_errors = Interactions(user_ids, item_ids, train_errors)
+        train_errors = Interactions(np.hstack((fold2.user_ids, fold1.user_ids)),
+                                    np.hstack((fold2.item_ids, fold1.item_ids)),
+                                    train_errors, num_users=train.num_users, num_items=train.num_items)
         print('DONE!')
 
         print('Fitting the MF error estimator...', end=' ')
@@ -127,6 +123,7 @@ if __name__ == '__main__':
         results['double']['RMSEReliability'][seed] = model.quantiles
         results['double']['RPI'][seed] = model.rpi
         results['double']['RRI'][seed] = model.rri
+        results['double']['Classification'] = model.classification
         print('DONE!')
 
         print('Fitting the bias error estimator...', end=' ')
@@ -141,10 +138,13 @@ if __name__ == '__main__':
         results['linear']['RMSEReliability'][seed] = model.quantiles
         results['linear']['RPI'][seed] = model.rpi
         results['linear']['RRI'][seed] = model.rri
+        results['linear']['Classification'] = model.classification
         print('DONE!')
+        del train_errors, predictions1, predictions2, fold1, fold2, model_cv, model_error
+        collect()
 
         model = CPMF(**CPMF_params)
-        model.fit(train, test, verbose=False)
+        model.fit(train, verbose=False)
         model.evaluate(test, train)
         results['CPMF']['RMSE'][seed] = model.rmse
         results['CPMF']['Precision'][seed] = model.precision
@@ -154,9 +154,10 @@ if __name__ == '__main__':
         results['CPMF']['RMSEReliability'][seed] = model.quantiles
         results['CPMF']['RPI'][seed] = model.rpi
         results['CPMF']['RRI'][seed] = model.rri
+        results['CPMF']['Classification'] = model.classification
 
         model = OrdRec(**OrdRec_params)
-        model.fit(train, test, verbose=False)
+        model.fit(train, verbose=False)
         model.evaluate(test, train)
         results['OrdRec']['RMSE'][seed] = model.rmse
         results['OrdRec']['Precision'][seed] = model.precision
@@ -166,3 +167,7 @@ if __name__ == '__main__':
         results['OrdRec']['RMSEReliability'][seed] = model.quantiles
         results['OrdRec']['RPI'][seed] = model.rpi
         results['OrdRec']['RRI'][seed] = model.rri
+        results['OrdRec']['Classification'] = model.classification
+
+    with open(path+'results.pkl', 'wb') as f:
+        pickle.dump(results, f, pickle.HIGHEST_PROTOCOL)

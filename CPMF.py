@@ -3,23 +3,19 @@ Factorization models for explicit feedback problems.
 """
 
 import numpy as np
-import pandas as pd
-from copy import deepcopy
-
 import torch
-import torch.nn as nn
-import torch.optim as optim
+from tqdm import tqdm
 
 from spotlight.helpers import _repr_model
 from spotlight.factorization._components import _predict_process_ids
 
 from spotlight.torch_utils import gpu
-from Utils.metrics import rmse_score, rpi_score, graphs_score, _get_precision_recall_rri
+from uncertain.metrics import rmse_score, rpi_score, graphs_score, precision_recall_rri_score, classification
 
 from scipy.stats import spearmanr, pearsonr
 
 
-class CPMFPar(nn.Module):
+class CPMFPar(torch.nn.Module):
 
     def __init__(self, num_users, num_items, embedding_dim=32):
 
@@ -27,9 +23,9 @@ class CPMFPar(nn.Module):
 
         self.embedding_dim = embedding_dim
 
-        self.user_embeddings = nn.Embedding(num_users, embedding_dim)
+        self.user_embeddings = torch.nn.Embedding(num_users, embedding_dim)
         self.user_embeddings.weight.data.uniform_(-.01, .01)
-        self.item_embeddings = nn.Embedding(num_items, embedding_dim)
+        self.item_embeddings = torch.nn.Embedding(num_items, embedding_dim)
         self.item_embeddings.weight.data.uniform_(-.01, .01)
 
         self.user_gammas = torch.nn.Embedding(num_users, 1)
@@ -100,7 +96,7 @@ class CPMF(object):
                                 self._embedding_dim),
                         self._use_cuda)
 
-        self._optimizer = optim.Adam(
+        self._optimizer = torch.optim.Adam(
             self._net.parameters(),
             lr=self._learning_rate,
             weight_decay=self._batch_size/self._num_ratings/self._sigma
@@ -126,7 +122,7 @@ class CPMF(object):
         item_ids_tensor = gpu(torch.from_numpy(interactions.item_ids.astype(np.int64)), self._use_cuda)
         ratings_tensor = gpu(torch.from_numpy(interactions.ratings), self._use_cuda)
 
-        for epoch_num in range(self._n_iter):
+        for epoch_num in tqdm(range(self._n_iter), desc='CPMF'):
 
             self.train_loss.append(0)
 
@@ -147,7 +143,7 @@ class CPMF(object):
 
             self.train_loss[-1] /= self._num_ratings
             if test:
-                predictions = model.predict(test.user_ids, test.item_ids)
+                predictions = self.predict(test.user_ids, test.item_ids)
                 loss = self._loss_func(torch.tensor(test.ratings), torch.tensor(predictions))
                 self.test_loss.append(loss.item()/len(test.ratings))
 
@@ -164,85 +160,28 @@ class CPMF(object):
 
         out = self._net(user_ids, item_ids)
 
-        return out[0].cpu().detach().numpy().flatten(), 1 / np.sqrt(out[1].cpu().detach().numpy().flatten())
+        return out[0].cpu().detach().numpy().flatten(), np.sqrt(out[1].cpu().detach().numpy().flatten())
 
     def evaluate(self, test, train):
 
-        preds = self.predict(test.user_ids, test.item_ids)
-        self.rmse = rmse_score(preds[0], test.ratings)
-        self.rpi = rpi_score(preds, test.ratings)
-        self.quantiles, self.intervals = graphs_score(preds, test.ratings)
+        predictions = self.predict(test.user_ids, test.item_ids)
+        error = np.abs(test.ratings - predictions[0])
+        self.correlation = pearsonr(error, predictions[1]), spearmanr(error, predictions[1])
 
-        df = pd.DataFrame(data={'user': test.user_ids, 'item': test.item_ids, 'error': np.square(preds[0] - test.ratings)})
-        user_rmse = df.groupby('user').mean()['error']
-        user_var = self._net.user_gammas.weight.data.cpu().detach()[torch.LongTensor(user_rmse.index)].numpy().flatten()
-        user_rmse = np.array(user_rmse)
-        self.user_rmse_var_corr = (pearsonr(user_rmse, user_var)[0], spearmanr(user_rmse, user_var)[0])
+        self.rmse = rmse_score(predictions[0], test.ratings)
+        self.rpi = -rpi_score(predictions, test.ratings)
+        self.quantiles, self.intervals = graphs_score(predictions, test.ratings)
 
-        item_rmse = df.groupby('item').mean()['error']
-        item_var = self._net.item_gammas.weight.data.cpu().detach()[torch.LongTensor(item_rmse.index)].numpy().flatten()
-        item_rmse = np.array(item_rmse)
-        self.item_rmse_var_corr = (pearsonr(item_rmse, item_var)[0], spearmanr(item_rmse, item_var)[0])
-
-        idx = test.ratings >= 4
-        test_ = deepcopy(test)
-        test_.user_ids = test_.user_ids[idx]
-        test_.item_ids = test_.item_ids[idx]
-        test_.ratings = test_.ratings[idx]
-        #preds = self.predict(test_.user_ids, test_.item_ids)
-        test_ = test_.tocsr()
-        train_ = train.tocsr()
-
-        avg_reliability, std_reliability = preds[1].mean(), preds[1].std()
-        print(avg_reliability, std_reliability)
-        k = np.arange(1, 11)
-
-        uid = []
-        precision = []
-        recall = []
-        rri = []
-
-        for user_id, row in enumerate(test_):
-
-            if not len(row.indices):
-                continue
-
-            predictions, reliabilities = model.predict(user_id)
-            predictions *= -1
-
-            rated = train_[user_id].indices
-            predictions[rated] = np.infty
-
-            predictions = predictions.argsort()
-
-            targets = row.indices
-
-            user_precision, user_recall, user_rri = zip(*[
-                _get_precision_recall_rri(predictions, reliabilities, avg_reliability, std_reliability, targets, x)
-                for x in k
-            ])
-
-            uid.append(user_id)
-            precision.append(user_precision)
-            recall.append(user_recall)
-            rri.append(user_rri)
-
-        precision = np.array(precision).squeeze()
-        recall = np.array(recall).squeeze()
-        self.rri = np.nanmean(np.array(rri).squeeze(), 0)
-
-        map = precision[:, 9].flatten()
-        user_var = self._net.user_gammas.weight.data.cpu().detach()[torch.LongTensor(uid)].numpy().flatten()
-        self.user_map_var_corr = (pearsonr(map, user_var)[0], spearmanr(map, user_var)[0])
-
-        self.precision = precision.mean(0)
-        self.recall = recall.mean(0)
-
+        p, r, e = precision_recall_rri_score(self, test, train, np.arange(1, 11))
+        self.precision = p.mean(axis=0)
+        self.recall = r.mean(axis=0)
+        self.rri = -np.nanmean(e, axis=0)
+        self.classification = classification(predictions, error, test)
 
 from Utils.utils import dataset_loader
-train, test = dataset_loader('1M')
+train, test = dataset_loader('10M', seed=0)
 
-model = CPMF(embedding_dim=50, n_iter=300, sigma=0.05, learning_rate=.02, batch_size=int(1e6), use_cuda=True)
+model = CPMF(embedding_dim=50, n_iter=50, sigma=0.02, learning_rate=.02, batch_size=int(1e6), use_cuda=False)
 model.fit(train, test, verbose=True)
 model.evaluate(test, train)
 print('RMSE = {}; Precision = {}; Recall = {}'.format(model.rmse, model.precision[-1], model.recall[-1]))

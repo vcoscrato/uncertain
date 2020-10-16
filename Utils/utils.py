@@ -1,7 +1,7 @@
 import numpy as np
-from spotlight.datasets import amazon, goodbooks, movielens
-from spotlight.cross_validation import random_train_test_split as split
-from spotlight.interactions import Interactions
+from uncertain.datasets import amazon, goodbooks, movielens
+from uncertain.cross_validation import random_train_test_split as split
+from uncertain.interactions import Interactions
 
 import gc
 import pickle
@@ -17,7 +17,7 @@ def dataset_loader(name, seed):
             data = pickle.load(f)
     else:
         data = movielens.get_movielens_dataset(name)
-    train, test = split(data, random_state=np.random.RandomState(seed), test_percentage=0.1)
+    train, test = split(data, test_percentage=0.1, random_state=seed)
     return train, test
 
 
@@ -73,22 +73,22 @@ def set_params(dataset):
 
     if dataset == '1M':
         MF_params = {'embedding_dim': 50, 'n_iter': 200, 'l2': 2e-5, 'learning_rate': 0.02,
-                     'batch_size': int(1e6), 'use_cuda': True, 'random_state': 0}
+                     'batch_size': int(1e6), 'use_cuda': False, 'random_state': 0}
         CPMF_params = {'embedding_dim': 50, 'n_iter': 200, 'sigma': 0.05, 'learning_rate': 0.02,
                        'batch_size': int(1e6), 'use_cuda': True}
         OrdRec_params = {'embedding_dim': 50, 'n_iter': 200, 'l2': 2e-6, 'learning_rate': 0.02,
                          'batch_size': int(1e6), 'use_cuda': True}
 
     elif dataset == '10M':
-        MF_params = {'embedding_dim': 50, 'n_iter': 200, 'l2': 2e-5, 'learning_rate': 0.02,
+        MF_params = {'embedding_dim': 50, 'n_iter': 100, 'l2': 1e-5, 'learning_rate': 0.02,
                      'batch_size': int(1e6), 'use_cuda': True, 'random_state': 0}
-        CPMF_params = {'embedding_dim': 50, 'n_iter': 200, 'sigma': 0.05, 'learning_rate': 0.02,
+        CPMF_params = {'embedding_dim': 50, 'n_iter': 50, 'sigma': 0.02, 'learning_rate': 0.02,
                        'batch_size': int(1e6), 'use_cuda': True}
-        OrdRec_params = {'embedding_dim': 50, 'n_iter': 200, 'l2': 2e-6, 'learning_rate': 0.02,
+        OrdRec_params = {'embedding_dim': 50, 'n_iter': 40, 'l2': 0, 'learning_rate': 0.01,
                          'batch_size': int(1e6), 'use_cuda': True}
 
     else:
-        MF_params = {'embedding_dim': 50, 'n_iter': 200, 'l2': 2e-5, 'learning_rate': 0.02,
+        MF_params = {'embedding_dim': 50, 'n_iter': 100, 'l2': 2e-5, 'learning_rate': 0.04,
                      'batch_size': int(1e6), 'use_cuda': True, 'random_state': 0}
         CPMF_params = {'embedding_dim': 50, 'n_iter': 200, 'sigma': 0.05, 'learning_rate': 0.02,
                        'batch_size': int(1e6), 'use_cuda': True}

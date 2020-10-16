@@ -12,7 +12,7 @@ from spotlight.helpers import _repr_model
 from spotlight.factorization._components import _predict_process_ids
 
 from spotlight.torch_utils import gpu
-from Utils.metrics import rmse_score, rpi_score, graphs_score, precision_recall_rri_score
+from uncertain.metrics import rmse_score, rpi_score, graphs_score, precision_recall_rri_score
 
 
 class KorenSillNet(nn.Module):
@@ -111,19 +111,11 @@ class KorenSill(object):
                                      len(self._rating_labels),
                                      self._embedding_dim),
                         self._use_cuda)
-        '''
-        self._optimizer = optim.Adam(
+
+        self._optimizer = torch.optim.Adam(
             self._net.parameters(),
             lr=self._learning_rate,
             weight_decay=self._l2
-            )
-        '''
-        self._optimizer = torch.optim.Adam(
-            [{'params': self._net.user_embeddings.parameters(), 'weight_decay': self._l2},
-             {'params': self._net.item_embeddings.parameters(), 'weight_decay': self._l2},
-             {'params': self._net.item_biases.parameters(), 'weight_decay': self._l2},
-             {'params': self._net.user_betas.parameters(), 'weight_decay': self._l2}],
-            lr=self._learning_rate
             )
 
         self.train_loss = []
@@ -223,22 +215,20 @@ class KorenSill(object):
 
 from Utils.utils import dataset_loader
 dataset = '10M'
-train, test = dataset_loader(dataset)
-train.ratings = train.ratings - np.random.binomial(1, 0.5, len(train.ratings))*0.5
-test.ratings = test.ratings - np.random.binomial(1, 0.5, len(test.ratings))*0.5
+train, test = dataset_loader(dataset, seed=0)
 if dataset == '1M':
     wd = 2e-6
     n_inter = 200
     lr = 0.02
 elif dataset == '10M':
-    wd = 1e-6
-    n_inter = 10
-    lr = 0.02
+    wd = 0
+    n_inter = 40
+    lr = 0.01
 else:
     wd = 1e-7
     n_inter = 20
 
-model = KorenSill(embedding_dim=2, n_iter=n_inter, learning_rate=lr, batch_size=int(1e6), l2=wd, use_cuda=True)
+model = KorenSill(embedding_dim=50, n_iter=n_inter, learning_rate=lr, batch_size=int(1e6), l2=wd, use_cuda=True)
 model.fit(train, test, verbose=True)
 model.evaluate(test, train)
 print(model.rmse, model.rpi)

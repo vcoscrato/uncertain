@@ -2,11 +2,6 @@ import numpy as np
 from matplotlib import pyplot as plt
 from pandas import DataFrame as df
 from Utils.utils import dataset_loader, load_models
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import roc_auc_score
-from sklearn.model_selection import KFold
-splitter = KFold(n_splits=2, shuffle=True, random_state=0)
-
 
 dataset = '100K'
 path = 'Empirical study/' + dataset + '/'
@@ -107,11 +102,5 @@ results = df((np.zeros((2, 9))), index=['Likelihood', 'AUC'], columns=keys)
 for key in keys:
     preds = models[key].predict(test.user_ids, test.item_ids)
     error = np.abs(preds[0] - test.ratings)
-    targets = error > 1
-    for train_index, test_index in splitter.split(test.ratings):
-        mod = LogisticRegression().fit(preds[1][train_index].reshape(-1, 1), targets[train_index])
-        probs = mod.predict_proba(preds[1][test_index].reshape(-1, 1))
-        likelihood = np.log(probs[range(len(probs)), targets[test_index].astype(int)]).mean() / 2
-        auc = roc_auc_score(targets[test_index], probs[:, 1]) / 2
-        results[key] += [likelihood, auc]
+
 results.T.to_csv(path + 'classification.csv', float_format='%.4f')

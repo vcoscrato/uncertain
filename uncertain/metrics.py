@@ -1,5 +1,8 @@
 import numpy as np
 from copy import deepcopy
+from sklearn.model_selection import KFold
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import roc_auc_score
 
 
 def rmse_score(predictions, ratings):
@@ -160,3 +163,93 @@ def precision_recall_rri_score(model, test, train=None, k=10):
     rri = np.array(rri).squeeze()
 
     return precision, recall, rri
+
+
+def classification(preds, error, test):
+
+    splitter = KFold(n_splits=2, shuffle=True, random_state=0)
+    targets = error > 1
+    likelihood = 0
+    auc = 0
+
+    for train_index, test_index in splitter.split(test.ratings):
+        mod = LogisticRegression().fit(preds[1][train_index].reshape(-1, 1), targets[train_index])
+        probs = mod.predict_proba(preds[1][test_index].reshape(-1, 1))
+        likelihood += np.log(probs[range(len(probs)), targets[test_index].astype(int)]).mean() / 2
+        auc += roc_auc_score(targets[test_index], probs[:, 1]) / 2
+
+    return likelihood, auc
+
+
+def _get_precision_recall(predictions, targets, k):
+
+    predictions = predictions[:k]
+    num_hit = len(set(predictions).intersection(set(targets)))
+
+    return float(num_hit) / len(predictions), float(num_hit) / len(targets)
+
+
+def precision_recall_score(model, test, train=None, k=10):
+    """
+    Compute Precision@k and Recall@k scores. One score
+    is given for every user with interactions in the test
+    set, representing the Precision@k and Recall@k of all their
+    test items.
+    Parameters
+    ----------
+    model: fitted instance of a recommender model
+        The model to evaluate.
+    test: :class:`spotlight.interactions.Interactions`
+        Test interactions.
+    train: :class:`spotlight.interactions.Interactions`, optional
+        Train interactions. If supplied, scores of known
+        interactions will not affect the computed metrics.
+    k: int or array of int,
+        The maximum number of predicted items
+    Returns
+    -------
+    (Precision@k, Recall@k): numpy array of shape (num_users, len(k))
+        A tuple of Precisions@k and Recalls@k for each user in test.
+        If k is a scalar, will return a tuple of vectors. If k is an
+        array, will return a tuple of arrays, where each row corresponds
+        to a user and each column corresponds to a value of k.
+    """
+
+    test = test.tocsr()
+
+    if train is not None:
+        train = train.tocsr()
+
+    if np.isscalar(k):
+        k = np.array([k])
+
+    precision = []
+    recall = []
+
+    for user_id, row in enumerate(test):
+
+        if not len(row.indices):
+            continue
+
+        predictions = -model.predict(user_id)
+
+        if train is not None:
+            rated = train[user_id].indices
+            predictions[rated] = FLOAT_MAX
+
+        predictions = predictions.argsort()
+
+        targets = row.indices
+
+        user_precision, user_recall = zip(*[
+            _get_precision_recall(predictions, targets, x)
+            for x in k
+        ])
+
+        precision.append(user_precision)
+        recall.append(user_recall)
+
+    precision = np.array(precision).squeeze()
+    recall = np.array(recall).squeeze()
+
+    return precision, recall
