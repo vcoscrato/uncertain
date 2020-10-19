@@ -11,13 +11,15 @@ class BaseRecommender(object):
                  learning_rate,
                  batch_size,
                  l2,
-                 use_cuda):
+                 use_cuda,
+                 verbose=True):
 
         self._n_iter = n_iter
         self._learning_rate = learning_rate
         self._batch_size = batch_size
         self._l2 = l2
         self._use_cuda = use_cuda
+        self._verbose = verbose
 
         self._num_users = None
         self._num_items = None
@@ -127,16 +129,22 @@ class BaseRecommender(object):
 
         self._check_input(train.user_ids, train.item_ids)
 
-        with trange(self._n_iter) as t:
-            for epoch_num in t:
+        if self._verbose:
+            t = trange(self._n_iter)
+        else:
+            t = range(self._n_iter)
 
-                self.train_loss.append(self._one_epoch(train))
+        for epoch_num in t:
 
-                if test:
-                    self.test_loss.append(self._loss_func(test.ratings, self._predict(test.user_ids, test.item_ids)))
+            self.train_loss.append(self._one_epoch(train))
+
+            if test:
+                self.test_loss.append(self._loss_func(test.ratings, self._predict(test.user_ids, test.item_ids)))
+                if self._verbose:
                     t.set_postfix_str('Epoch {} loss - Train: {}, Test: {}'.format(epoch_num+1,
                                       self.train_loss[-1], self.test_loss[-1]))
-                else:
+            else:
+                if self._verbose:
                     t.set_postfix_str('Epoch {} loss: {}'.format(epoch_num + 1, self.train_loss[-1]))
 
     def _predict(self, user_ids, item_ids=None):
@@ -169,4 +177,7 @@ class BaseRecommender(object):
 
         out = self._net(user_ids, item_ids)
 
-        return out
+        if type(out) is not tuple:
+            return out.detach()
+        else:
+            return out[0].detach(), out[1].detach()

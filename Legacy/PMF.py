@@ -11,7 +11,7 @@ import torch.optim as optim
 from spotlight.helpers import _repr_model
 from spotlight.factorization._components import _predict_process_ids
 from spotlight.evaluation import rmse_score, precision_recall_score
-from spotlight.torch_utils import shuffle, minibatch, gpu, assert_no_grad
+from spotlight.torch_utils import gpu, assert_no_grad
 
 
 class BilinearNet(nn.Module):
@@ -172,7 +172,7 @@ class PMF(object):
 
 
 
-from Utils.utils import dataset_loader
+from utils import dataset_loader
 train, test = dataset_loader('100K')
 
 model = PMF(embedding_dim=50, n_iter=200, lambda_u=.5, lambda_v=.5, learning_rate=.001, batch_size=8196, use_cuda=True)

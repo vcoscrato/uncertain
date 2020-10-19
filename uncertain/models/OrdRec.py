@@ -159,4 +159,4 @@ class OrdRec(BaseRecommender):
         mean = (distribution * self._rating_labels).sum(1)
         var = ((distribution * self._rating_labels**2).sum(1) - mean**2).abs()
 
-        return mean.cpu().detach().numpy(), var.cpu().detach().numpy()
+        return mean, var

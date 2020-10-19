@@ -1,9 +1,7 @@
+import torch
 from uncertain.models.BaseRecommender import BaseRecommender
 from uncertain.utils import gpu, assert_no_grad
 from uncertain.layers import ZeroEmbedding, ScaledEmbedding
-from torch.optim import Adam
-from torch.nn import Module
-from torch import log
 
 
 def gaussian_loss(observed_ratings, predicted_ratings):
@@ -25,12 +23,12 @@ def gaussian_loss(observed_ratings, predicted_ratings):
 
     assert_no_grad(observed_ratings)
 
-    squared_error = (observed_ratings - predicted_ratings[0]) ** 2
+    mean, variance = predicted_ratings
 
-    return (squared_error / predicted_ratings[1]).mean() + log(predicted_ratings[1]).mean()
+    return (((observed_ratings - mean) ** 2) / variance).mean() + torch.log(variance).mean()
 
 
-class CPMFNet(Module):
+class CPMFNet(torch.nn.Module):
     """
     Confidence-Aware probabilistic matrix factorization representation.
 
@@ -55,7 +53,7 @@ class CPMFNet(Module):
         self.user_gammas = ScaledEmbedding(num_users, 1, sparse=sparse)
         self.item_gammas = ScaledEmbedding(num_items, 1, sparse=sparse)
 
-        self.var_activation = Softplus()
+        self.var_activation = torch.nn.Softplus()
 
     def forward(self, user_ids, item_ids):
         """
@@ -126,7 +124,7 @@ class CPMF(BaseRecommender):
                                 self._embedding_dim),
                         self._use_cuda)
 
-        self._optimizer = Adam(
+        self._optimizer = torch.optim.Adam(
             self._net.parameters(),
             lr=self._learning_rate,
             weight_decay=self._l2
@@ -138,4 +136,4 @@ class CPMF(BaseRecommender):
 
         mean, var = self._predict(user_ids, item_ids)
 
-        return mean.cpu().detach().numpy(), var.cpu().detach().numpy()
+        return mean, var

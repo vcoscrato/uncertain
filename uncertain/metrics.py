@@ -1,5 +1,5 @@
+import torch
 import numpy as np
-from copy import deepcopy
 from sklearn.model_selection import KFold
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
@@ -7,189 +7,75 @@ from sklearn.metrics import roc_auc_score
 
 def rmse_score(predictions, ratings):
 
-    return np.sqrt(((ratings - predictions) ** 2).mean())
+    return torch.sqrt(((ratings - predictions) ** 2).mean())
 
 
-def rpi_score(predictions, ratings):
+def pearson_correlation(x, y):
+    
+    x_deviations = x - x.mean()
+    y_deviations = y - y.mean()
+    x_std = torch.sqrt((x_deviations**2).sum())
+    y_std = torch.sqrt((y_deviations**2).sum())
 
-    predictions, confidence = predictions
-    errors = np.abs(predictions - ratings)
+    return (x_deviations * y_deviations).sum() / (x_std * y_std)
+    
+
+def correlation(error, uncertainty):
+
+    pearson = pearson_correlation(error, uncertainty)
+
+    a = error.clone()
+    b = uncertainty.clone()
+    a[a.argsort()] = torch.arange(len(a), dtype=a.dtype, device=a.device)
+    b[b.argsort()] = torch.arange(len(b), dtype=b.dtype, device=b.device)
+    spearman = pearson_correlation(a, b)
+
+    return pearson, spearman
+
+
+def rpi_score(errors, uncertainty):
 
     MAE = errors.mean()
     error_deviations = errors - MAE
-    confidence_deviations = confidence.mean() - confidence
-    errors_std = np.abs(error_deviations).mean()
-    epsilon_std = np.abs(confidence_deviations).mean()
+    uncertainty_deviations = uncertainty - uncertainty.mean()
+    errors_std = torch.abs(error_deviations).mean()
+    epsilon_std = torch.abs(uncertainty_deviations).mean()
 
-    return (errors*error_deviations*confidence_deviations).mean()/(errors_std*epsilon_std*MAE)
-
-
-def graphs_score(predictions, ratings):
-
-    predictions, epsilons = predictions
-    quantiles = np.quantile(epsilons, np.linspace(start=0, stop=1, num=21, endpoint=True))
-
-    rmse = []
-    width = []
-
-    for idx in range(1, 21):
-        ind = np.bitwise_and(quantiles[idx-1] <= epsilons, epsilons <= quantiles[idx])
-        errors = np.abs(predictions[ind] - ratings[ind])
-        rmse.append(np.sqrt(np.square(errors).mean()))
-        width.append(np.quantile(errors, 0.95))
-
-    return np.array(rmse), np.array(width)
+    return (errors*error_deviations*uncertainty_deviations).mean()/(errors_std*epsilon_std*MAE)
 
 
-def _get_rri(predictions, reliabilities, avg_rel, std_rel, targets, k):
+def quantiles(error, uncertainty):
 
-    predictions = predictions[:k]
-    reliabilities = reliabilities[:k]
-    hit = list(set(predictions).intersection(set(targets)))
-    num_hit = float(len(hit))
-    if num_hit == 0:
-        return np.nan
-    deviations = reliabilities[np.isin(predictions, hit)] - avg_rel
+    quantiles = torch.quantile(uncertainty, torch.linspace(0, 1, 21, device=uncertainty.device, dtype=uncertainty.dtype))
+    rmse = torch.zeros(20)
 
-    return (deviations.sum() / std_rel) / num_hit
+    for idx in range(20):
+        ind = torch.bitwise_and(quantiles[idx] <= uncertainty, uncertainty < quantiles[idx+1])
+        rmse[idx] = torch.sqrt(torch.square(error[ind]).mean())
 
-
-def rri_score(model, test, train=None, k=10):
-
-    reliabilities = model.predict(test.user_ids, test.item_ids)[1]
-    avg_reliability, std_reliability = reliabilities.mean(), reliabilities.std()
-
-    if np.isscalar(k):
-        k = np.array([k])
-
-    idx = test.ratings >= 4
-    test_ = deepcopy(test)
-    test_.user_ids = test_.user_ids[idx]
-    test_.item_ids = test_.item_ids[idx]
-    test_.ratings = test_.ratings[idx]
-    test_ = test_.tocsr()
-    if train is not None:
-        train = train.tocsr()
-
-    rri = []
-
-    for user_id, row in enumerate(test_):
-
-        if not len(row.indices):
-            continue
-
-        predictions, reliabilities = model.predict(user_id)
-        predictions *= -1
-
-        if train is not None:
-            rated = train[user_id].indices
-            predictions[rated] = np.infty
-
-        predictions = predictions.argsort()
-        targets = row.indices
-
-        user_rri = [
-            _get_rri(predictions, reliabilities, avg_reliability, std_reliability, targets, x) for x in k]
-
-        rri.append(user_rri)
-
-    rri = np.array(rri).squeeze()
-
-    return rri
+    return rmse
 
 
-def _get_precision_recall_rri(predictions, reliabilities, avg_rel, std_rel, targets, k):
+def classification(error, uncertainty):
 
-    predictions = predictions[:k]
-    reliabilities = reliabilities[:k]
-    hit = list(set(predictions).intersection(set(targets)))
-    num_hit = float(len(hit))
-    if num_hit == 0:
-        return 0, 0, np.nan
-    deviations = reliabilities[np.isin(predictions, hit)] - avg_rel
-
-    return num_hit / len(predictions), num_hit / len(targets), (deviations.sum() / std_rel) / num_hit
-
-
-def precision_recall_rri_score(model, test, train=None, k=10):
-
-    idx = test.ratings >= 4
-    test_ = deepcopy(test)
-    test_.user_ids = test_.user_ids[idx]
-    test_.item_ids = test_.item_ids[idx]
-    test_.ratings = test_.ratings[idx]
-
-    reliabilities = model.predict(test_.user_ids, test_.item_ids)[1]
-    avg_reliability, std_reliability = reliabilities.mean(), reliabilities.std()
-
-    test_ = test_.tocsr()
-    if train is not None:
-        train = train.tocsr()
-
-    if np.isscalar(k):
-        k = np.array([k])
-
-    precision = []
-    recall = []
-    rri = []
-
-    for user_id, row in enumerate(test_):
-
-        if not len(row.indices):
-            continue
-
-        predictions, reliabilities = model.predict(user_id)
-        predictions *= -1
-
-        if train is not None:
-            rated = train[user_id].indices
-            predictions[rated] = np.infty
-
-        predictions = predictions.argsort()
-
-        targets = row.indices
-
-        user_precision, user_recall, user_rri = zip(*[
-            _get_precision_recall_rri(predictions, reliabilities, avg_reliability, std_reliability, targets, x)
-            for x in k
-        ])
-
-        precision.append(user_precision)
-        recall.append(user_recall)
-        rri.append(user_rri)
-
-    precision = np.array(precision).squeeze()
-    recall = np.array(recall).squeeze()
-    rri = np.array(rri).squeeze()
-
-    return precision, recall, rri
-
-
-def classification(preds, error, test):
+    error = error.cpu().detach().numpy()
+    uncertainty = uncertainty.cpu().detach().numpy()
 
     splitter = KFold(n_splits=2, shuffle=True, random_state=0)
     targets = error > 1
     likelihood = 0
     auc = 0
 
-    for train_index, test_index in splitter.split(test.ratings):
-        mod = LogisticRegression().fit(preds[1][train_index].reshape(-1, 1), targets[train_index])
-        probs = mod.predict_proba(preds[1][test_index].reshape(-1, 1))
+    for train_index, test_index in splitter.split(error):
+        mod = LogisticRegression().fit(uncertainty[train_index].reshape(-1, 1), targets[train_index])
+        probs = mod.predict_proba(uncertainty[test_index].reshape(-1, 1))
         likelihood += np.log(probs[range(len(probs)), targets[test_index].astype(int)]).mean() / 2
         auc += roc_auc_score(targets[test_index], probs[:, 1]) / 2
 
     return likelihood, auc
 
 
-def _get_precision_recall(predictions, targets, k):
-
-    predictions = predictions[:k]
-    num_hit = len(set(predictions).intersection(set(targets)))
-
-    return float(num_hit) / len(predictions), float(num_hit) / len(targets)
-
-
-def precision_recall_score(model, test, train=None, k=10):
+def precision_recall_score(model, test, train=None, max_k=10):
     """
     Compute Precision@k and Recall@k scores. One score
     is given for every user with interactions in the test
@@ -204,52 +90,50 @@ def precision_recall_score(model, test, train=None, k=10):
     train: :class:`spotlight.interactions.Interactions`, optional
         Train interactions. If supplied, scores of known
         interactions will not affect the computed metrics.
-    k: int or array of int,
+    k: int or tensor of int,
         The maximum number of predicted items
     Returns
     -------
-    (Precision@k, Recall@k): numpy array of shape (num_users, len(k))
+    (Precision@k, Recall@k): numpy tensor of shape (num_users, len(k))
         A tuple of Precisions@k and Recalls@k for each user in test.
         If k is a scalar, will return a tuple of vectors. If k is an
-        array, will return a tuple of arrays, where each row corresponds
+        tensor, will return a tuple of tensors, where each row corresponds
         to a user and each column corresponds to a value of k.
     """
 
-    test = test.tocsr()
-
-    if train is not None:
-        train = train.tocsr()
-
-    if np.isscalar(k):
-        k = np.array([k])
-
     precision = []
     recall = []
+    precision_denom = torch.arange(1, max_k+1, device=test.user_ids.device)
 
-    for user_id, row in enumerate(test):
+    for user_id in range(test.num_users):
 
-        if not len(row.indices):
+        targets = test.item_ids[test.user_ids == user_id]
+
+        if not len(targets):
             continue
 
-        predictions = -model.predict(user_id)
+        predictions = model.predict(user_id)
+
+        if type(predictions) is not tuple:
+            predictions = -predictions
+        else:
+            predictions = -predictions[0]
 
         if train is not None:
-            rated = train[user_id].indices
-            predictions[rated] = FLOAT_MAX
+            rated = train.item_ids[train.user_ids == user_id]
+            predictions[rated] = float('inf')
 
-        predictions = predictions.argsort()
+        predictions = predictions.argsort()[:max_k]
 
-        targets = row.indices
+        indices = torch.zeros_like(predictions, dtype=torch.bool)
+        for elem in targets:
+            indices = indices | (predictions == elem)
+        num_hit = indices.cumsum(0)
 
-        user_precision, user_recall = zip(*[
-            _get_precision_recall(predictions, targets, x)
-            for x in k
-        ])
+        precision.append(num_hit / precision_denom)
+        recall.append(num_hit / len(targets))
 
-        precision.append(user_precision)
-        recall.append(user_recall)
-
-    precision = np.array(precision).squeeze()
-    recall = np.array(recall).squeeze()
+    precision = torch.vstack(precision)
+    recall = torch.vstack(recall)
 
     return precision, recall

@@ -168,8 +168,7 @@ class ExplicitFactorizationModel(BaseRecommender):
 
         if self._embedding_dim == 0:
             self._net = gpu(BiasNet(self._num_users,
-                                    self._num_items,
-                                    self._embedding_dim),
+                                    self._num_items),
                             self._use_cuda)
 
         else:
@@ -188,4 +187,4 @@ class ExplicitFactorizationModel(BaseRecommender):
 
     def predict(self, user_ids, item_ids=None):
 
-        return self._predict(user_ids, item_ids).cpu().detach().numpy()
+        return self._predict(user_ids, item_ids)

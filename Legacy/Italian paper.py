@@ -2,8 +2,8 @@ import numpy as np
 from sklearn.utils.extmath import randomized_svd
 from sklearn.metrics.pairwise import cosine_similarity
 import scipy.sparse as sps
-from spotlight.evaluation import rmse_score, precision_recall_score
-from spotlight.factorization._components import _predict_process_ids, gpu
+from spotlight.evaluation import precision_recall_score
+from spotlight.factorization._components import _predict_process_ids
 import torch
 
 
@@ -93,7 +93,7 @@ class SimilarityRecommender(object):
         self.precision, self.recall = precision_recall_score(self, test, train, 10)
 
 
-from Utils.utils import dataset_loader
+from utils import dataset_loader
 train, test = dataset_loader('1M')
 train_csr = train.tocsr()[1:, 1:]
 test_nz = test.tocsr()[1:].getnnz(1) > 0

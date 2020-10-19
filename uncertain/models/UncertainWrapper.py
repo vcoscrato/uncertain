@@ -24,7 +24,7 @@ class LinearUncertaintyEstimator(object):
         user_uncertainty = self.user[user_ids] if self.user is not None else 0
         item_uncertainty = self.item[item_ids] if self.item is not None else 0
 
-        return (user_uncertainty + item_uncertainty).cpu().detach().numpy()
+        return (user_uncertainty + item_uncertainty)
 
 
 class UncertainWrapper(object):
