@@ -44,18 +44,6 @@ def rpi_score(errors, uncertainty):
     return (errors*error_deviations*uncertainty_deviations).mean()/(errors_std*epsilon_std*MAE)
 
 
-def quantiles(error, uncertainty):
-
-    quantiles = torch.quantile(uncertainty, torch.linspace(0, 1, 21, device=uncertainty.device, dtype=uncertainty.dtype))
-    rmse = torch.zeros(20)
-
-    for idx in range(20):
-        ind = torch.bitwise_and(quantiles[idx] <= uncertainty, uncertainty < quantiles[idx+1])
-        rmse[idx] = torch.sqrt(torch.square(error[ind]).mean())
-
-    return rmse
-
-
 def classification(error, uncertainty):
 
     error = error.cpu().detach().numpy()
@@ -75,7 +63,7 @@ def classification(error, uncertainty):
     return likelihood, auc
 
 
-def precision_recall_score(model, test, train=None, max_k=10):
+def recommendation_score(model, test, train=None, relevance_threshold=4, max_k=10):
     """
     Compute Precision@k and Recall@k scores. One score
     is given for every user with interactions in the test
@@ -103,11 +91,15 @@ def precision_recall_score(model, test, train=None, max_k=10):
 
     precision = []
     recall = []
+    average_reliability = []
+    rri = []
     precision_denom = torch.arange(1, max_k+1, device=test.user_ids.device)
+
+    uncertainties = None
 
     for user_id in range(test.num_users):
 
-        targets = test.item_ids[test.user_ids == user_id]
+        targets = test.item_ids[torch.logical_and(test.user_ids == user_id, test.ratings >= relevance_threshold)]
 
         if not len(targets):
             continue
@@ -117,23 +109,37 @@ def precision_recall_score(model, test, train=None, max_k=10):
         if type(predictions) is not tuple:
             predictions = -predictions
         else:
+            uncertainties = predictions[1]
             predictions = -predictions[0]
 
         if train is not None:
             rated = train.item_ids[train.user_ids == user_id]
             predictions[rated] = float('inf')
 
-        predictions = predictions.argsort()[:max_k]
+        idx = predictions.argsort()
+        if uncertainties is not None:
+            average_reliability.append(uncertainties.mean())
+            uncertainties = uncertainties[idx][:max_k]
+        predictions = idx[:max_k]
 
-        indices = torch.zeros_like(predictions, dtype=torch.bool)
+        hits = torch.zeros_like(predictions, dtype=torch.bool)
         for elem in targets:
-            indices = indices | (predictions == elem)
-        num_hit = indices.cumsum(0)
+            hits = hits | (predictions == elem)
+        num_hit = hits.cumsum(0)
 
         precision.append(num_hit / precision_denom)
         recall.append(num_hit / len(targets))
+        if uncertainties is not None and hits.sum().item() > 0:
+            rri_ = torch.empty(max_k - 1)
+            for i in range(2, max_k+1):
+                unc = uncertainties[:i]
+                rri_[i-2] = (unc.mean() - unc[hits[:i]]).mean() / unc.std()
+            rri.append(rri_)
 
     precision = torch.vstack(precision)
     recall = torch.vstack(recall)
+    if len(rri) > 0:
+        average_reliability = torch.tensor(average_reliability, device=precision.device)
+        rri = torch.vstack(rri)
 
-    return precision, recall
+    return precision, recall, average_reliability, rri

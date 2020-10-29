@@ -1,9 +1,7 @@
+import torch
 from uncertain.models.BaseRecommender import BaseRecommender
 from uncertain.utils import gpu, assert_no_grad
 from uncertain.layers import ZeroEmbedding, ScaledEmbedding
-from torch.optim import Adam
-from torch.nn import Module, Softplus
-from torch import exp, div, ones, cat
 
 
 def max_prob_loss(observed_ratings, predicted_ratings):
@@ -28,7 +26,7 @@ def max_prob_loss(observed_ratings, predicted_ratings):
     return -predicted_ratings[range(len(-predicted_ratings)), observed_ratings].mean()
 
 
-class OrdRecNet(Module):
+class OrdRecNet(torch.nn.Module):
     """
     OrdRec representation.
 
@@ -83,16 +81,15 @@ class OrdRecNet(Module):
         y = ((user_embedding * item_embedding).sum(1) + item_bias).reshape(-1, 1)
 
         user_beta = self.user_betas(user_ids)
-        user_beta[:, 1:] = exp(user_beta[:, 1:])
-        user_distribution = div(1, 1 + exp(y - user_beta.cumsum(1)))
+        user_beta[:, 1:] = torch.exp(user_beta[:, 1:])
+        user_distribution = torch.div(1, 1 + torch.exp(y - user_beta.cumsum(1)))
 
-        one = ones((len(user_distribution), 1), device=user_beta.device)
-        user_distribution = cat((user_distribution, one), 1)
+        one = torch.ones((len(user_distribution), 1), device=user_beta.device)
+        user_distribution = torch.cat((user_distribution, one), 1)
 
         user_distribution[:, 1:] -= user_distribution[:, :-1].clone()
 
         return user_distribution
-
 
 
 class OrdRec(BaseRecommender):
@@ -136,7 +133,7 @@ class OrdRec(BaseRecommender):
                                   self._embedding_dim),
                         self._use_cuda)
 
-        self._optimizer = Adam(
+        self._optimizer = torch.optim.Adam(
             self._net.parameters(),
             lr=self._learning_rate,
             weight_decay=self._l2
