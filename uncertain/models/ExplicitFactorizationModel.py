@@ -99,9 +99,6 @@ class FunkSVDNet(Module):
         self.user_embeddings = ScaledEmbedding(num_users, embedding_dim, sparse=sparse)
         self.item_embeddings = ScaledEmbedding(num_items, embedding_dim, sparse=sparse)
 
-        self.user_biases = ZeroEmbedding(num_users, 1, sparse=sparse)
-        self.item_biases = ZeroEmbedding(num_items, 1, sparse=sparse)
-
     def forward(self, user_ids, item_ids):
         """
         Compute the forward pass of the representation.
@@ -125,12 +122,9 @@ class FunkSVDNet(Module):
         user_embedding = user_embedding.squeeze()
         item_embedding = item_embedding.squeeze()
 
-        user_bias = self.user_biases(user_ids).squeeze()
-        item_bias = self.item_biases(item_ids).squeeze()
-
         dot = (user_embedding * item_embedding).sum(1)
 
-        return dot + user_bias + item_bias
+        return dot
 
 
 class ExplicitFactorizationModel(BaseRecommender):
@@ -140,25 +134,25 @@ class ExplicitFactorizationModel(BaseRecommender):
                  n_iter,
                  learning_rate,
                  batch_size,
-                 l2,
+                 l2_penalty,
                  use_cuda):
 
         super(ExplicitFactorizationModel, self).__init__(n_iter,
                                                          learning_rate,
                                                          batch_size,
-                                                         l2,
                                                          use_cuda)
 
         self._embedding_dim = embedding_dim
-
-        self.train_loss = []
-        self.test_loss = []
+        self._l2 = l2_penalty
 
     @property
     def _initialized(self):
         return self._net is not None
 
     def _initialize(self, interactions):
+        
+        self.train_loss = []
+        self.test_loss = []
 
         (self._num_users,
          self._num_items,
@@ -170,16 +164,18 @@ class ExplicitFactorizationModel(BaseRecommender):
             self._net = gpu(BiasNet(self._num_users,
                                     self._num_items),
                             self._use_cuda)
+            self._desc = 'Linear recommender'
 
         else:
             self._net = gpu(FunkSVDNet(self._num_users,
                                        self._num_items,
                                        self._embedding_dim),
                             self._use_cuda)
+            self._desc = 'FunkSVD'
 
         self._optimizer = Adam(
             self._net.parameters(),
-            lr=self._learning_rate,
+            lr=self._lr,
             weight_decay=self._l2
             )
 

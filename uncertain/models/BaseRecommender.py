@@ -1,5 +1,5 @@
+import torch
 import numpy as np
-from torch import tensor, arange, from_numpy
 from uncertain.utils import gpu, minibatch
 from tqdm import trange
 
@@ -10,16 +10,15 @@ class BaseRecommender(object):
                  n_iter,
                  learning_rate,
                  batch_size,
-                 l2,
                  use_cuda,
                  verbose=True):
 
         self._n_iter = n_iter
-        self._learning_rate = learning_rate
+        self._lr = learning_rate
         self._batch_size = batch_size
-        self._l2 = l2
         self._use_cuda = use_cuda
         self._verbose = verbose
+        self._desc = None
 
         self._num_users = None
         self._num_items = None
@@ -46,36 +45,13 @@ class BaseRecommender(object):
     def _initialized(self):
         return self._net is not None
 
-    def _check_input(self, user_ids, item_ids, allow_items_none=False):
-
-        if isinstance(user_ids, int):
-            user_id_max = user_ids
-        else:
-            user_id_max = user_ids.max()
-
-        if user_id_max >= self._num_users:
-            raise ValueError('Maximum user id greater '
-                             'than number of users in model.')
-
-        if allow_items_none and item_ids is None:
-            return
-
-        if isinstance(item_ids, int):
-            item_id_max = item_ids
-        else:
-            item_id_max = item_ids.max()
-
-        if item_id_max >= self._num_items:
-            raise ValueError('Maximum item id greater '
-                             'than number of items in model.')
-
     def _predict_process_ids(self, user_ids, item_ids):
 
         if item_ids is None:
-            item_ids = arange(self._num_items)
+            item_ids = torch.arange(self._num_items)
 
         if np.isscalar(user_ids):
-            user_ids = tensor(user_ids)
+            user_ids = torch.tensor(user_ids)
 
         if item_ids.size() != user_ids.size():
             user_ids = user_ids.expand(item_ids.size())
@@ -126,11 +102,9 @@ class BaseRecommender(object):
 
         if not self._initialized:
             self._initialize(train)
-
-        self._check_input(train.user_ids, train.item_ids)
-
+            
         if self._verbose:
-            t = trange(self._n_iter)
+            t = trange(self._n_iter, desc=self._desc)
         else:
             t = range(self._n_iter)
 
@@ -139,7 +113,7 @@ class BaseRecommender(object):
             self.train_loss.append(self._one_epoch(train))
 
             if test:
-                self.test_loss.append(self._loss_func(test.ratings, self._predict(test.user_ids, test.item_ids)))
+                self.test_loss.append(self._loss_func(test.ratings, self._predict(test.user_ids, test.item_ids)).item())
                 if self._verbose:
                     t.set_postfix_str('Epoch {} loss - Train: {}, Test: {}'.format(epoch_num+1,
                                       self.train_loss[-1], self.test_loss[-1]))
@@ -170,14 +144,13 @@ class BaseRecommender(object):
         predictions: np.array
             Predicted scores for all items in item_ids.
         """
-
-        self._check_input(user_ids, item_ids, allow_items_none=True)
-        self._net.train(False)
+        
         user_ids, item_ids = self._predict_process_ids(user_ids, item_ids)
 
-        out = self._net(user_ids, item_ids)
+        with torch.no_grad():
+            out = self._net(user_ids, item_ids)
 
         if type(out) is not tuple:
-            return out.detach()
+            return out
         else:
-            return out[0].detach(), out[1].detach()
+            return out[0], out[1]

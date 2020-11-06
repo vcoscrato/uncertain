@@ -51,9 +51,6 @@ class OrdRecNet(torch.nn.Module):
         self.user_embeddings = ScaledEmbedding(num_users, embedding_dim, sparse=sparse)
         self.item_embeddings = ScaledEmbedding(num_items, embedding_dim, sparse=sparse)
 
-        self.user_biases = ZeroEmbedding(num_users, 1, sparse=sparse)
-        self.item_biases = ZeroEmbedding(num_items, 1, sparse=sparse)
-
         self.user_betas = ZeroEmbedding(num_users, num_labels-1, sparse=sparse)
 
     def forward(self, user_ids, item_ids):
@@ -76,9 +73,7 @@ class OrdRecNet(torch.nn.Module):
         user_embedding = self.user_embeddings(user_ids).squeeze()
         item_embedding = self.item_embeddings(item_ids).squeeze()
 
-        item_bias = self.item_biases(item_ids).squeeze()
-
-        y = ((user_embedding * item_embedding).sum(1) + item_bias).reshape(-1, 1)
+        y = (user_embedding * item_embedding).sum(1).reshape(-1, 1)
 
         user_beta = self.user_betas(user_ids)
         user_beta[:, 1:] = torch.exp(user_beta[:, 1:])
@@ -100,26 +95,29 @@ class OrdRec(BaseRecommender):
                  n_iter,
                  batch_size,
                  learning_rate,
-                 l2,
+                 l2_base,
+                 l2_step,
                  use_cuda):
 
         super(OrdRec, self).__init__(n_iter,
                                      learning_rate,
                                      batch_size,
-                                     l2,
                                      use_cuda)
 
+        self._desc = 'OrdRec'
         self._rating_labels = ratings_labels
         self._embedding_dim = embedding_dim
-
-        self.train_loss = []
-        self.test_loss = []
+        self._l2_base = l2_base
+        self._l2_step = l2_step
 
     @property
     def _initialized(self):
         return self._net is not None
 
     def _initialize(self, interactions):
+        
+        self.train_loss = []
+        self.test_loss = []
 
         (self._num_users,
          self._num_items,
@@ -134,10 +132,9 @@ class OrdRec(BaseRecommender):
                         self._use_cuda)
 
         self._optimizer = torch.optim.Adam(
-            self._net.parameters(),
-            lr=self._learning_rate,
-            weight_decay=self._l2
-            )
+            [{'params': self._net.user_embeddings.parameters(), 'weight_decay': self._l2_base, 'lr': self._lr},
+             {'params': self._net.item_embeddings.parameters(), 'weight_decay': self._l2_base, 'lr': self._lr},
+             {'params': self._net.user_betas.parameters(), 'weight_decay': self._l2_step, 'lr': self._lr}])
 
         self._loss_func = max_prob_loss
 

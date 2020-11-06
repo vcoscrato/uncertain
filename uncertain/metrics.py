@@ -91,7 +91,7 @@ def recommendation_score(model, test, train=None, relevance_threshold=4, max_k=1
 
     precision = []
     recall = []
-    average_reliability = []
+    average_uncertainty = []
     rri = []
     precision_denom = torch.arange(1, max_k+1, device=test.user_ids.device)
 
@@ -118,8 +118,8 @@ def recommendation_score(model, test, train=None, relevance_threshold=4, max_k=1
 
         idx = predictions.argsort()
         if uncertainties is not None:
-            average_reliability.append(uncertainties.mean())
             uncertainties = uncertainties[idx][:max_k]
+            average_uncertainty.append(uncertainties.mean())
         predictions = idx[:max_k]
 
         hits = torch.zeros_like(predictions, dtype=torch.bool)
@@ -139,7 +139,7 @@ def recommendation_score(model, test, train=None, relevance_threshold=4, max_k=1
     precision = torch.vstack(precision)
     recall = torch.vstack(recall)
     if len(rri) > 0:
-        average_reliability = torch.tensor(average_reliability, device=precision.device)
+        average_uncertainty = torch.tensor(average_uncertainty, device=precision.device)
         rri = torch.vstack(rri)
 
-    return precision, recall, average_reliability, rri
+    return precision, recall, average_uncertainty, rri

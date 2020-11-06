@@ -92,26 +92,28 @@ class CPMF(BaseRecommender):
                  n_iter,
                  batch_size,
                  learning_rate,
-                 sigma,
+                 l2_base,
+                 l2_var,
                  use_cuda):
 
         super(CPMF, self).__init__(n_iter,
                                    learning_rate,
                                    batch_size,
-                                   1/sigma,
                                    use_cuda)
 
+        self._desc = 'CPMF'
         self._embedding_dim = embedding_dim
-        self._sigma = sigma
-
-        self.train_loss = []
-        self.test_loss = []
+        self._l2_base = l2_base
+        self._l2_var = l2_var
 
     @property
     def _initialized(self):
         return self._net is not None
 
     def _initialize(self, interactions):
+        
+        self.train_loss = []
+        self.test_loss = []
 
         (self._num_users,
          self._num_items,
@@ -125,10 +127,10 @@ class CPMF(BaseRecommender):
                         self._use_cuda)
 
         self._optimizer = torch.optim.Adam(
-            self._net.parameters(),
-            lr=self._learning_rate,
-            weight_decay=self._l2
-            )
+            [{'params': self._net.user_embeddings.parameters(), 'weight_decay': self._l2_base, 'lr': self._lr},
+             {'params': self._net.item_embeddings.parameters(), 'weight_decay': self._l2_base, 'lr': self._lr},
+             {'params': self._net.user_gammas.parameters(), 'weight_decay': self._l2_var, 'lr': self._lr},
+             {'params': self._net.item_gammas.parameters(), 'weight_decay': self._l2_var, 'lr': self._lr}])
 
         self._loss_func = gaussian_loss
 
