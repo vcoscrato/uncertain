@@ -8,7 +8,7 @@ from uncertain.models.ExplicitFactorizationModel import ExplicitFactorizationMod
 from uncertain.models.UncertainWrapper import UncertainWrapper, LinearUncertaintyEstimator
 from uncertain.models.multimodelling import EnsembleRecommender, ResampleRecommender
 from uncertain.cross_validation import user_based_split, random_train_test_split
-from uncertain.interactions import Interactions
+from uncertain.interactions import ExplicitInteractions
 from uncertain.models.CPMF import CPMF
 from uncertain.models.OrdRec import OrdRec
 from uncertain.datasets.movielens import get_movielens_dataset
@@ -18,7 +18,7 @@ from uncertain.datasets.goodbooks import get_goodbooks_dataset
 from utils import dataset_loader, evaluate
 
 
-train = get_goodbooks_dataset()
+train = get_movielens_dataset('100K')
 train, test = random_train_test_split(train, test_percentage=0.2, random_state=0)
 train.gpu()
 test.gpu()
