@@ -4,7 +4,7 @@ import torch
 import numpy as np
 from uncertain.datasets import amazon, goodbooks, movielens
 from uncertain.cross_validation import random_train_test_split as split
-from uncertain.interactions import Interactions
+from uncertain.interactions import ExplicitInteractions
 from uncertain.metrics import rmse_score, recommendation_score, correlation, rpi_score, classification
 
 
@@ -60,7 +60,7 @@ def generate_netflix():
 
     gc.collect()
 
-    data = Interactions(indices, coo_col, coo_val)
+    data = ExplicitInteractions(indices, coo_col, coo_val)
     with open('/home/vcoscrato/Documents/Data/netflix.pkl', 'wb') as f:
         pickle.dump(data, f, pickle.HIGHEST_PROTOCOL)
 

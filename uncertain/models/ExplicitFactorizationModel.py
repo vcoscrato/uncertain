@@ -145,10 +145,6 @@ class ExplicitFactorizationModel(BaseRecommender):
         self._embedding_dim = embedding_dim
         self._l2 = l2_penalty
 
-    @property
-    def _initialized(self):
-        return self._net is not None
-
     def _initialize(self, interactions):
         
         self.train_loss = []
@@ -164,14 +160,14 @@ class ExplicitFactorizationModel(BaseRecommender):
             self._net = gpu(BiasNet(self._num_users,
                                     self._num_items),
                             self._use_cuda)
-            self._desc = 'Linear recommender'
+            self._desc = 'basic-Linear recommender'
 
         else:
             self._net = gpu(FunkSVDNet(self._num_users,
                                        self._num_items,
                                        self._embedding_dim),
                             self._use_cuda)
-            self._desc = 'FunkSVD'
+            self._desc = 'basic-FunkSVD'
 
         self._optimizer = Adam(
             self._net.parameters(),

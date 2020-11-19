@@ -42,6 +42,10 @@ class BaseRecommender(object):
         ))
 
     @property
+    def _is_uncertain(self):
+        return 'basic' not in self._desc
+
+    @property
     def _initialized(self):
         return self._net is not None
 
@@ -65,13 +69,19 @@ class BaseRecommender(object):
 
         epoch_loss = 0
 
+        loader = minibatch(interactions, batch_size=self._batch_size)
+
         for (minibatch_num,
              (batch_user,
               batch_item,
-              batch_ratings)) in enumerate(minibatch(interactions.user_ids,
-                                                     interactions.item_ids,
-                                                     interactions.ratings,
-                                                     batch_size=self._batch_size)):
+              batch_ratings)) in enumerate(loader):
+
+            '''
+            if self._use_cuda:
+                batch_user = batch_item.cuda()
+                batch_item = batch_item.cuda()
+                batch_ratings = batch_ratings.cuda()
+            '''
 
             predictions = self._net(batch_user, batch_item)
             loss = self._loss_func(batch_ratings, predictions)
@@ -110,6 +120,7 @@ class BaseRecommender(object):
 
         for epoch_num in t:
 
+            train.shuffle()
             self.train_loss.append(self._one_epoch(train))
 
             if test:
@@ -154,3 +165,25 @@ class BaseRecommender(object):
             return out
         else:
             return out[0], out[1]
+
+    def recommend(self, user_id, train=None, top=10):
+
+        predictions = self.predict(user_id)
+
+        if not self._is_uncertain:
+            predictions = -predictions
+            uncertainties = None
+        else:
+            uncertainties = predictions[1]
+            predictions = -predictions[0]
+
+        if train is not None:
+            rated = train.item_ids[train.user_ids == user_id]
+            predictions[rated] = float('inf')
+
+        idx = predictions.argsort()
+        predictions = idx[:top]
+        if self._is_uncertain:
+            uncertainties = uncertainties[idx][:top]
+
+        return predictions, uncertainties

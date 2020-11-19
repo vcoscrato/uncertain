@@ -95,8 +95,6 @@ def recommendation_score(model, test, train=None, relevance_threshold=4, max_k=1
     rri = []
     precision_denom = torch.arange(1, max_k+1, device=test.user_ids.device)
 
-    uncertainties = None
-
     for user_id in range(test.num_users):
 
         targets = test.item_ids[torch.logical_and(test.user_ids == user_id, test.ratings >= relevance_threshold)]
@@ -104,23 +102,9 @@ def recommendation_score(model, test, train=None, relevance_threshold=4, max_k=1
         if not len(targets):
             continue
 
-        predictions = model.predict(user_id)
-
-        if type(predictions) is not tuple:
-            predictions = -predictions
-        else:
-            uncertainties = predictions[1]
-            predictions = -predictions[0]
-
-        if train is not None:
-            rated = train.item_ids[train.user_ids == user_id]
-            predictions[rated] = float('inf')
-
-        idx = predictions.argsort()
-        if uncertainties is not None:
-            uncertainties = uncertainties[idx][:max_k]
+        predictions, uncertainties = model.recommend(user_id, train)
+        if model._is_uncertain:
             average_uncertainty.append(uncertainties.mean())
-        predictions = idx[:max_k]
 
         hits = torch.zeros_like(predictions, dtype=torch.bool)
         for elem in targets:

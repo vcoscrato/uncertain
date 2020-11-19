@@ -106,10 +106,6 @@ class CPMF(BaseRecommender):
         self._l2_base = l2_base
         self._l2_var = l2_var
 
-    @property
-    def _initialized(self):
-        return self._net is not None
-
     def _initialize(self, interactions):
         
         self.train_loss = []

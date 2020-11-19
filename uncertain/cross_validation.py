@@ -4,9 +4,7 @@ Module with functionality for splitting and shuffling datasets.
 
 import torch
 import numpy as np
-from uncertain.interactions import Interactions
-from uncertain.interactions import _index_or_none
-
+from uncertain.interactions import ExplicitInteractions
 
 def random_train_test_split(interactions,
                             test_percentage=0.2,
@@ -39,26 +37,16 @@ def random_train_test_split(interactions,
     train_idx = slice(None, cutoff)
     test_idx = slice(cutoff, None)
 
-    train = Interactions(interactions.user_ids[train_idx],
-                         interactions.item_ids[train_idx],
-                         ratings=_index_or_none(interactions.ratings,
-                                                train_idx),
-                         timestamps=_index_or_none(interactions.timestamps,
-                                                   train_idx),
-                         weights=_index_or_none(interactions.weights,
-                                                train_idx),
-                         num_users=interactions.num_users,
-                         num_items=interactions.num_items)
-    test = Interactions(interactions.user_ids[test_idx],
-                        interactions.item_ids[test_idx],
-                        ratings=_index_or_none(interactions.ratings,
-                                               test_idx),
-                        timestamps=_index_or_none(interactions.timestamps,
-                                                  test_idx),
-                        weights=_index_or_none(interactions.weights,
-                                               test_idx),
-                        num_users=interactions.num_users,
-                        num_items=interactions.num_items)
+    train = ExplicitInteractions(interactions.user_ids[train_idx],
+                                 interactions.item_ids[train_idx],
+                                 ratings=interactions.ratings[train_idx],
+                                 num_users=interactions.num_users,
+                                 num_items=interactions.num_items)
+    test = ExplicitInteractions(interactions.user_ids[test_idx],
+                                interactions.item_ids[test_idx],
+                                ratings=interactions.ratings[test_idx],
+                                num_users=interactions.num_users,
+                                num_items=interactions.num_items)
 
     return train, test
 
