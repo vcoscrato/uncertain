@@ -5,6 +5,8 @@ Module with functionality for splitting and shuffling datasets.
 import torch
 import numpy as np
 from uncertain.interactions import ExplicitInteractions
+from copy import deepcopy as dc
+
 
 def random_train_test_split(interactions,
                             test_percentage=0.2,
@@ -30,23 +32,18 @@ def random_train_test_split(interactions,
          A tuple of (train data, test data)
     """
 
+    n_users = interactions.num_users
+    n_items = interactions.num_items
     interactions.shuffle(random_state)
 
     cutoff = int((1.0 - test_percentage) * len(interactions))
 
-    train_idx = slice(None, cutoff)
-    test_idx = slice(cutoff, None)
-
-    train = ExplicitInteractions(interactions.user_ids[train_idx],
-                                 interactions.item_ids[train_idx],
-                                 ratings=interactions.ratings[train_idx],
-                                 num_users=interactions.num_users,
-                                 num_items=interactions.num_items)
-    test = ExplicitInteractions(interactions.user_ids[test_idx],
-                                interactions.item_ids[test_idx],
-                                ratings=interactions.ratings[test_idx],
-                                num_users=interactions.num_users,
-                                num_items=interactions.num_items)
+    train = interactions[:cutoff]
+    train = ExplicitInteractions(train[0], train[1], train[2],
+                                 n_users, n_items)
+    test = interactions[cutoff:]
+    test = ExplicitInteractions(test[0], test[1], test[2],
+                                n_users, n_items)
 
     return train, test
 

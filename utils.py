@@ -60,9 +60,10 @@ def generate_netflix():
 
     gc.collect()
 
-    data = ExplicitInteractions(indices, coo_col, coo_val)
+    print('saving...')
+
     with open('/home/vcoscrato/Documents/Data/netflix.pkl', 'wb') as f:
-        pickle.dump(data, f, pickle.HIGHEST_PROTOCOL)
+        pickle.dump((indices, coo_col, coo_val), f)
 
     return 'Success!'
 
