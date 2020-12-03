@@ -104,7 +104,7 @@ class BaseRecommender(object):
         if not self._initialized:
             self._initialize(train)
 
-        validation_loader = minibatch(validation, batch_size=1e5)
+        validation_loader = minibatch(validation, batch_size=int(1e5))
         epoch = 1
         tol = False
         while True:
