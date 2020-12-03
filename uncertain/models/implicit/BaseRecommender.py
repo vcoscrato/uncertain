@@ -1,7 +1,6 @@
 import torch
 import numpy as np
 from uncertain.utils import gpu, minibatch, sample_items
-from tqdm import trange
 
 
 class BaseRecommender(object):

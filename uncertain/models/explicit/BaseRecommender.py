@@ -104,6 +104,7 @@ class BaseRecommender(object):
         if not self._initialized:
             self._initialize(train)
 
+        validation_loader = minibatch(validation, batch_size=1e5)
         epoch = 1
         tol = False
         while True:
@@ -111,9 +112,16 @@ class BaseRecommender(object):
             train.shuffle()
             self.train_loss.append(self._one_epoch(train))
 
+            epoch_loss = 0
             with torch.no_grad():
-                predictions = self._net(validation.user_ids, validation.item_ids)
-                epoch_loss = self._loss_func(validation.ratings, predictions).item()
+
+                for (minibatch_num,
+                     (batch_user,
+                      batch_item,
+                      batch_ratings)) in enumerate(validation_loader):
+
+                    predictions = self._net(batch_user, batch_item)
+                    epoch_loss += self._loss_func(batch_ratings, predictions).item()
 
             out = 'Epoch {} loss - Train: {}, Test: {}'.format(epoch, self.train_loss[-1], epoch_loss)
 
