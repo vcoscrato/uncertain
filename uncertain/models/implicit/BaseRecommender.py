@@ -7,18 +7,18 @@ from tqdm import trange
 class BaseRecommender(object):
 
     def __init__(self,
-                 n_iter,
                  batch_size,
                  learning_rate,
                  use_cuda,
+                 path,
                  verbose=True):
 
-        self._n_iter = n_iter
         self._lr = learning_rate
         self._batch_size = batch_size
         self._use_cuda = use_cuda
+        self._path = path
         self._verbose = verbose
-        self._desc = None
+        self._random_state = np.random.RandomState()
 
         self._num_users = None
         self._num_items = None
@@ -27,7 +27,7 @@ class BaseRecommender(object):
         self._loss_func = None
 
         self.train_loss = None
-        self.test_loss = None
+        self.min_val_loss = float('inf')
 
     def __repr__(self):
 
@@ -100,7 +100,7 @@ class BaseRecommender(object):
         epoch_loss /= minibatch_num+1
         return epoch_loss
 
-    def fit(self, train, test=None):
+    def fit(self, train, validation=None):
         """
         Fit the model.
         When called repeatedly, model fitting will resume from
@@ -111,31 +111,56 @@ class BaseRecommender(object):
         ----------
         train: :class:`uncertain.interactions.Interactions`
             The input dataset. Must have ratings.
-        test: :class:`uncertain.interactions.Interactions`
+        validation: :class:`uncertain.interactions.Interactions`
             Test dataset for iterative evaluation.
         """
 
         if not self._initialized:
             self._initialize(train)
-            
-        if self._verbose:
-            t = trange(self._n_iter, desc=self._desc)
-        else:
-            t = range(self._n_iter)
 
-        for epoch_num in t:
+        validation_loader = minibatch(validation, batch_size=1e5)
+        epoch = 1
+        tol = False
+        while True:
 
             train.shuffle()
             self.train_loss.append(self._one_epoch(train))
 
-            if test:
-                self.test_loss.append(self._loss_func(test.ratings, self._predict(test.user_ids, test.item_ids)).item())
-                if self._verbose:
-                    t.set_postfix_str('Epoch {} loss - Train: {}, Test: {}'.format(epoch_num+1,
-                                      self.train_loss[-1], self.test_loss[-1]))
+            epoch_loss = 0
+            with torch.no_grad():
+
+                for (minibatch_num,
+                     (batch_user,
+                      batch_item)) in enumerate(validation_loader):
+
+                    positive_predictions = self._net(batch_user, batch_item)
+                    negative_prediction = self._get_negative_prediction(batch_user)
+                    epoch_loss += self._loss_func(positive_predictions, negative_prediction).item()
+
+            out = 'Epoch {} loss - Train: {}, Test: {}'.format(epoch, self.train_loss[-1], epoch_loss)
+
+            if epoch_loss < self.min_val_loss:
+                tol = False
+                self.min_val_loss = epoch_loss
+                out += ' - This is the lowest validation loss so far'
+                epoch += 1
+                torch.save(self._net.state_dict(), self._path)
+
             else:
-                if self._verbose:
-                    t.set_postfix_str('Epoch {} loss: {}'.format(epoch_num + 1, self.train_loss[-1]))
+                checkpoint = torch.load(self._path)
+                self._net.load_state_dict(checkpoint)
+                if tol:
+                    out += ' - Validation loss did not improve. Ending training.'
+                    print(out)
+                    break
+                else:
+                    out += ' - Validation loss did not improve. Reducing learning rate.'
+                    tol = True
+                    for g in self._optimizer.param_groups:
+                        g['lr'] /= 2
+
+            if self._verbose:
+                print(out)
 
     def _predict(self, user_ids, item_ids=None):
         """

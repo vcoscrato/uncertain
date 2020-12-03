@@ -111,8 +111,9 @@ class BaseRecommender(object):
             train.shuffle()
             self.train_loss.append(self._one_epoch(train))
 
-            preds = self._predict(validation.user_ids, validation.item_ids)
-            epoch_loss = self._loss_func(validation.ratings, preds).item()
+            with torch.no_grad():
+                predictions = self._net(validation.user_ids, validation.item_ids)
+                epoch_loss = self._loss_func(validation.ratings, predictions).item()
 
             out = 'Epoch {} loss - Train: {}, Test: {}'.format(epoch, self.train_loss[-1], epoch_loss)
 
