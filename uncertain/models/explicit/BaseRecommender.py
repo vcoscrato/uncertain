@@ -110,6 +110,7 @@ class BaseRecommender(object):
         while True:
 
             train.shuffle()
+            self._net.train()
             self.train_loss.append(self._one_epoch(train))
 
             epoch_loss = 0
