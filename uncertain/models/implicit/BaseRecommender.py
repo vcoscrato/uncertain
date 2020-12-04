@@ -123,6 +123,7 @@ class BaseRecommender(object):
         while True:
 
             train.shuffle()
+            self._net.train()
             self.train_loss.append(self._one_epoch(train))
 
             epoch_loss = 0
@@ -132,6 +133,7 @@ class BaseRecommender(object):
                      (batch_user,
                       batch_item)) in enumerate(validation_loader):
 
+                    self._net.eval()
                     positive_predictions = self._net(batch_user, batch_item)
                     negative_prediction = self._get_negative_prediction(batch_user)
                     epoch_loss += self._loss_func(positive_predictions, negative_prediction).item()

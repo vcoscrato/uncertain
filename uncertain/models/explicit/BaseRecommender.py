@@ -120,6 +120,7 @@ class BaseRecommender(object):
                       batch_item,
                       batch_ratings)) in enumerate(validation_loader):
 
+                    self._net.eval()
                     predictions = self._net(batch_user, batch_item)
                     epoch_loss += self._loss_func(batch_ratings, predictions).item()
 
