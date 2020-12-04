@@ -117,7 +117,6 @@ class BaseRecommender(object):
         if not self._initialized:
             self._initialize(train)
 
-        validation_loader = minibatch(validation, batch_size=int(1e5))
         epoch = 1
         tol = False
         while True:
@@ -126,6 +125,7 @@ class BaseRecommender(object):
             self._net.train()
             self.train_loss.append(self._one_epoch(train))
 
+            validation_loader = minibatch(validation, batch_size=int(1e5))
             epoch_loss = 0
             with torch.no_grad():
 
