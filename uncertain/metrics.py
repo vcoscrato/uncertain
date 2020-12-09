@@ -103,7 +103,7 @@ def recommendation_score(model, test, train=None, relevance_threshold=4, max_k=1
             continue
 
         predictions, uncertainties = model.recommend(user_id, train)
-        if model._is_uncertain:
+        if model.is_uncertain:
             average_uncertainty.append(uncertainties.mean())
 
         hits = torch.zeros_like(predictions, dtype=torch.bool)

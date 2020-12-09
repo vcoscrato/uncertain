@@ -55,6 +55,6 @@ class CPMF(BaseRecommender):
 
     def predict(self, user_ids, item_ids=None):
 
-        mean, var = self._predict(user_ids, item_ids)
+        out = self._predict(user_ids, item_ids)
 
-        return mean, var
+        return out[0], out[1]

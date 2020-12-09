@@ -4,7 +4,7 @@ setup(
     name='uncertain',
     version='0.0.1',
     packages=find_packages(),
-    install_requires=['torch>=1.7.0'],
+    install_requires=['torch>=1.7.0', 'numpy'],
     license='MIT',
     classifiers=['Development Status :: 3 - Alpha',
                  'License :: OSI Approved :: MIT License',

@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 from uncertain.utils import gpu, minibatch
+from uncertain.metrics import rmse_score, recommendation_score, correlation, rpi_score, classification
 
 
 class BaseRecommender(object):
@@ -40,7 +41,7 @@ class BaseRecommender(object):
         ))
 
     @property
-    def _is_uncertain(self):
+    def is_uncertain(self):
         return 'basic' not in self._desc
 
     @property
@@ -103,6 +104,11 @@ class BaseRecommender(object):
 
         if not self._initialized:
             self._initialize(train)
+            try:
+                self._net.load_state_dict(torch.load(self._path))
+                print('Previous training file encountered. Loading and resuming training.')
+            except:
+                print('No previous training file found. Starting training from scratch.')
 
         epoch = 1
         tol = False
@@ -125,7 +131,9 @@ class BaseRecommender(object):
                     predictions = self._net(batch_user, batch_item)
                     epoch_loss += self._loss_func(batch_ratings, predictions).item()
 
-            out = 'Epoch {} loss - Train: {}, Test: {}'.format(epoch, self.train_loss[-1], epoch_loss)
+                epoch_loss /= minibatch_num+1
+
+            out = 'Epoch {} loss - Train: {}, Validation: {}'.format(epoch, self.train_loss[-1], epoch_loss)
 
             if epoch_loss < self.min_val_loss:
                 tol = False
@@ -135,8 +143,7 @@ class BaseRecommender(object):
                 torch.save(self._net.state_dict(), self._path)
 
             else:
-                checkpoint = torch.load(self._path)
-                self._net.load_state_dict(checkpoint)
+                self._net.load_state_dict(torch.load(self._path))
                 if tol:
                     out += ' - Validation loss did not improve. Ending training.'
                     print(out)
@@ -179,16 +186,13 @@ class BaseRecommender(object):
         with torch.no_grad():
             out = self._net(user_ids, item_ids)
 
-        if type(out) is not tuple:
-            return out
-        else:
-            return out[0], out[1]
+        return out
 
     def recommend(self, user_id, train=None, top=10):
 
         predictions = self.predict(user_id)
 
-        if not self._is_uncertain:
+        if not self.is_uncertain:
             predictions = -predictions
             uncertainties = None
         else:
@@ -201,7 +205,49 @@ class BaseRecommender(object):
 
         idx = predictions.argsort()
         predictions = idx[:top]
-        if self._is_uncertain:
+        if self.is_uncertain:
             uncertainties = uncertainties[idx][:top]
 
         return predictions, uncertainties
+
+    def evaluate(self, test, train):
+
+        out = {}
+        loader = minibatch(test, batch_size=int(1e5))
+        est = []
+        if self.is_uncertain:
+            unc = []
+            for u, i, _ in loader:
+                predictions = self.predict(u, i)
+                est.append(predictions[0])
+                unc.append(predictions[1])
+            unc = torch.hstack(unc)
+        else:
+            for u, i, _ in loader:
+                est.append(self.predict(u, i))
+        est = torch.hstack(est)
+
+        p, r, a, s = recommendation_score(self, test, train, max_k=10)
+
+        out['RMSE'] = rmse_score(est, test.ratings)
+        out['Precision'] = p.mean(axis=0)
+        out['Recall'] = r.mean(axis=0)
+
+        if self.is_uncertain:
+            error = torch.abs(test.ratings - est)
+            quantiles = torch.quantile(unc, torch.linspace(0, 1, 21, device=unc.device, dtype=unc.dtype))
+            out['Quantile RMSE'] = torch.zeros(20)
+            for idx in range(20):
+                ind = torch.bitwise_and(quantiles[idx] <= unc, unc < quantiles[idx + 1])
+                out['Quantile RMSE'][idx] = torch.sqrt(torch.square(error[ind]).mean())
+            quantiles = torch.quantile(a, torch.linspace(0, 1, 21, device=a.device, dtype=a.dtype))
+            out['Quantile MAP'] = torch.zeros(20)
+            for idx in range(20):
+                ind = torch.bitwise_and(quantiles[idx] <= a, a < quantiles[idx + 1])
+                out['Quantile MAP'][idx] = p[ind, -1].mean()
+            out['RRI'] = s.nansum(0) / (~s.isnan()).float().sum(0)
+            out['Correlation'] = correlation(error, unc)
+            out['RPI'] = rpi_score(error, unc)
+            out['Classification'] = classification(error, unc)
+
+        return out

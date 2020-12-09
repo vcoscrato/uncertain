@@ -138,6 +138,8 @@ class BaseRecommender(object):
                     negative_prediction = self._get_negative_prediction(batch_user)
                     epoch_loss += self._loss_func(positive_predictions, negative_prediction).item()
 
+                epoch_loss /= minibatch_num + 1
+
             out = 'Epoch {} loss - Train: {}, Test: {}'.format(epoch, self.train_loss[-1], epoch_loss)
 
             if epoch_loss < self.min_val_loss:
@@ -192,10 +194,7 @@ class BaseRecommender(object):
         with torch.no_grad():
             out = self._net(user_ids, item_ids)
 
-        if type(out) is not tuple:
-            return out
-        else:
-            return out[0], out[1]
+        return out
 
     def recommend(self, user_id, train=None, top=10):
 
