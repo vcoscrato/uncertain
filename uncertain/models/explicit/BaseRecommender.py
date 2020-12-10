@@ -235,7 +235,8 @@ class BaseRecommender(object):
 
         if self.is_uncertain:
             error = torch.abs(test.ratings - est)
-            quantiles = torch.quantile(unc, torch.linspace(0, 1, 21, device=unc.device, dtype=unc.dtype))
+            idx = torch.randperm(len(unc))[:int(1e5)]
+            quantiles = torch.quantile(unc[idx], torch.linspace(0, 1, 21, device=unc.device, dtype=unc.dtype))
             out['Quantile RMSE'] = torch.zeros(20)
             for idx in range(20):
                 ind = torch.bitwise_and(quantiles[idx] <= unc, unc < quantiles[idx + 1])
