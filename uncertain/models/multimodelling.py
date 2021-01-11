@@ -21,7 +21,8 @@ class EnsembleRecommender(object):
         for _ in tqdm(range(self.n_models-1), desc='Ensemble'):
             self.models.append(deepcopy(self.models[0]))
             self.models[-1]._path += '_temp'
-            self.models[-1]._initialize(train)
+            self.models[-1]._verbose = False
+            self.models[-1].initialize(train)
             self.models[-1].fit(train, validation)
             
     def _predict_process_ids(self, user_ids, item_ids):
@@ -71,7 +72,8 @@ class ResampleRecommender(object):
             train, _ = split(interactions, random_state=i, test_percentage=0.1)
             self.models.append(deepcopy(self.base_model))
             self.models[-1]._path += '_temp'
-            self.models[i]._initialize(train)
+            self.models[-1]._verbose = False
+            self.models[i].initialize(train)
             self.models[i].fit(train, validation)
 
     def _predict_process_ids(self, user_ids, item_ids):
