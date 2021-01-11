@@ -16,12 +16,13 @@ class EnsembleRecommender(object):
         self.models[0]._verbose = False
         self.n_models = n_models
 
-    def fit(self, interactions):
+    def fit(self, train, validation):
 
         for _ in tqdm(range(self.n_models-1), desc='Ensemble'):
             self.models.append(deepcopy(self.models[0]))
-            self.models[-1]._initialize(interactions)
-            self.models[-1].fit(interactions)
+            self.models[-1]._path += '_temp'
+            self.models[-1]._initialize(train)
+            self.models[-1].fit(train, validation)
             
     def _predict_process_ids(self, user_ids, item_ids):
 
@@ -65,12 +66,13 @@ class ResampleRecommender(object):
         self.models = []
         self.n_models = n_models
 
-    def fit(self, interactions):
+    def fit(self, train, validation):
         for i in tqdm(range(self.n_models), desc='Resample'):
             train, _ = split(interactions, random_state=i, test_percentage=0.1)
             self.models.append(deepcopy(self.base_model))
+            self.models[-1]._path += '_temp'
             self.models[i]._initialize(train)
-            self.models[i].fit(train)
+            self.models[i].fit(train, validation)
 
     def _predict_process_ids(self, user_ids, item_ids):
 

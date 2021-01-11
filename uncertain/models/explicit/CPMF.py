@@ -28,7 +28,7 @@ class CPMF(BaseRecommender):
         self._l2_var = l2_var
         self._sparse = sparse
 
-    def _initialize(self, interactions):
+    def initialize(self, interactions):
         
         self.train_loss = []
         self.test_loss = []

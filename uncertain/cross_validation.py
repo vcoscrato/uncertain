@@ -67,10 +67,9 @@ def user_based_split(interactions, n_validation, n_test):
         idx = interactions.user_ids == u
         if idx.sum() <= n_validation + n_test:
             continue
-        order = interactions.timestamps[idx].argsort()
-        user_ids = interactions.user_ids[idx][order]
-        item_ids = interactions.item_ids[idx][order]
-        ratings = interactions.ratings[idx][order]
+        user_ids = interactions.user_ids[idx]
+        item_ids = interactions.item_ids[idx]
+        ratings = interactions.ratings[idx]
 
         test_user_ids.append(user_ids[-n_test:])
         test_item_ids.append(item_ids[-n_test:])
@@ -85,16 +84,16 @@ def user_based_split(interactions, n_validation, n_test):
         train_item_ids.append(item_ids[:-(n_test+n_validation)])
         train_ratings.append(ratings[:-(n_test+n_validation)])
 
-    train = Interactions(torch.cat(train_user_ids).long(),
+    train = ExplicitInteractions(torch.cat(train_user_ids).long(),
                          torch.cat(train_item_ids).long(),
                          torch.cat(train_ratings), num_items=interactions.num_items)
 
-    test = Interactions(torch.cat(test_user_ids).long(),
+    test = ExplicitInteractions(torch.cat(test_user_ids).long(),
                         torch.cat(test_item_ids).long(),
                         torch.cat(test_ratings), num_items=interactions.num_items)
 
     if n_validation > 0:
-        validation = Interactions(torch.cat(validation_user_ids).long(),
+        validation = ExplicitInteractions(torch.cat(validation_user_ids).long(),
                                   torch.cat(validation_item_ids).long(),
                                   torch.cat(validation_ratings), num_items=interactions.num_items)
 

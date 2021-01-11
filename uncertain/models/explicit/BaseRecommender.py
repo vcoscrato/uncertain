@@ -103,12 +103,14 @@ class BaseRecommender(object):
         """
 
         if not self._initialized:
-            self._initialize(train)
+            self.initialize(train)
             try:
                 self._net.load_state_dict(torch.load(self._path))
-                print('Previous training file encountered. Loading and resuming training.')
+                if self._verbose:
+                    print('Previous training file encountered. Loading and resuming training.')
             except:
-                print('No previous training file found. Starting training from scratch.')
+                if self._verbose:
+                    print('No previous training file found. Starting training from scratch.')
 
         epoch = 1
         tol = False
@@ -146,7 +148,8 @@ class BaseRecommender(object):
                 self._net.load_state_dict(torch.load(self._path))
                 if tol:
                     out += ' - Validation loss did not improve. Ending training.'
-                    print(out)
+                    if self._verbose:
+                        print(out)
                     break
                 else:
                     out += ' - Validation loss did not improve. Reducing learning rate.'

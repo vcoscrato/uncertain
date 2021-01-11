@@ -46,7 +46,7 @@ class ExplicitFactorizationModel(BaseRecommender):
         self._l2 = l2
         self._sparse = sparse
 
-    def _initialize(self, interactions):
+    def initialize(self, interactions):
         
         self.train_loss = []
         self.test_loss = []

@@ -30,7 +30,7 @@ class OrdRec(BaseRecommender):
         self._l2_step = l2_step
         self._sparse = sparse
 
-    def _initialize(self, interactions):
+    def initialize(self, interactions):
         
         self.train_loss = []
         self.test_loss = []
