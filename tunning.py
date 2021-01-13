@@ -7,7 +7,7 @@ from uncertain.models.explicit.CPMF import CPMF
 from uncertain.models.explicit.OrdRec import OrdRec
 from uncertain.datasets.movielens import get_movielens_dataset
 from uncertain.cross_validation import random_train_test_split, user_based_split
-from uncertain.models import multimodelling
+from uncertain.models import multimodelling, UncertainWrapper
 
 data = get_movielens_dataset(variant='100K')
 train, val, test = user_based_split(interactions=data, n_validation=4, n_test=6)
@@ -50,3 +50,6 @@ print(ensemble.evaluate(test, train))
 resample = multimodelling.ResampleRecommender(base_model=baseline, n_models=5)
 resample.fit(train, val)
 print(resample.evaluate(test, train))
+
+item_support = UncertainWrapper.UncertainWrapper(baseline, UncertainWrapper.LinearUncertaintyEstimator(None, -train.get_item_support()))
+print(item_support.evaluate(test, train))
