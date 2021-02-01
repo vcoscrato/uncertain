@@ -93,11 +93,12 @@ def recommendation_score(model, test, train=None, relevance_threshold=4, max_k=1
     recall = []
     average_uncertainty = []
     rri = []
-    precision_denom = torch.arange(1, max_k+1, device=test.user_ids.device)
+    precision_denom = torch.arange(1, max_k+1, device=test.interactions.device)
 
     for user_id in range(test.num_users):
 
-        targets = test.item_ids[torch.logical_and(test.user_ids == user_id, test.ratings >= relevance_threshold)]
+        targets = test.interactions[:, 1][torch.logical_and(test.interactions[:, 0] == user_id,
+                                                            test.ratings >= relevance_threshold)]
 
         if not len(targets):
             continue

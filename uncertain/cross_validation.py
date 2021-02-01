@@ -4,11 +4,11 @@ Module with functionality for splitting and shuffling datasets.
 
 import torch
 import numpy as np
-from uncertain.interactions import ExplicitInteractions
+from uncertain.interactions import Interactions
 from copy import deepcopy as dc
 
 
-def random_train_test_split(interactions,
+def random_train_test_split(data,
                             test_percentage=0.2,
                             random_state=None):
     """
@@ -17,7 +17,7 @@ def random_train_test_split(interactions,
     Parameters
     ----------
 
-    interactions: :class:`uncertain.interactions.Interactions`
+    data: :class:`uncertain.interactions.Interactions`
         The interactions to shuffle.
     test_percentage: float, optional
         The fraction of interactions to place in the test set.
@@ -32,23 +32,35 @@ def random_train_test_split(interactions,
          A tuple of (train data, test data)
     """
 
-    n_users = interactions.num_users
-    n_items = interactions.num_items
-    interactions.shuffle(random_state)
+    n_users = data.num_users
+    n_items = data.num_items
+    data.shuffle(random_state)
 
-    cutoff = int((1.0 - test_percentage) * len(interactions))
+    cutoff = int((1.0 - test_percentage) * len(data))
 
-    train = interactions[:cutoff]
-    train = ExplicitInteractions(train[0], train[1], train[2],
-                                 n_users, n_items)
-    test = interactions[cutoff:]
-    test = ExplicitInteractions(test[0], test[1], test[2],
-                                n_users, n_items)
+    train_interactions = data.interactions[:cutoff]
+    test_interactions = data.interactions[cutoff:]
+
+    train_ratings = None if data.ratings is None else data.ratings[:cutoff]
+    test_ratings = None if data.ratings is None else data.ratings[cutoff:]
+
+    train = Interactions(train_interactions, train_ratings, n_users, n_items)
+    test = Interactions(test_interactions, test_ratings, n_users, n_items)
 
     return train, test
 
 
 def user_based_split(interactions, n_validation, n_test):
+    """
+    Currently not functioning
+
+    Args:
+        interactions:
+        n_validation:
+        n_test:
+
+    Returns:
+    """
 
     train_user_ids = []
     train_item_ids = []
@@ -84,11 +96,11 @@ def user_based_split(interactions, n_validation, n_test):
         train_item_ids.append(item_ids[:-(n_test+n_validation)])
         train_ratings.append(ratings[:-(n_test+n_validation)])
 
-    train = ExplicitInteractions(torch.cat(train_user_ids).long(),
+    train = Interactions(torch.cat(train_user_ids).long(),
                          torch.cat(train_item_ids).long(),
                          torch.cat(train_ratings), num_items=interactions.num_items)
 
-    test = ExplicitInteractions(torch.cat(test_user_ids).long(),
+    test = Interactions(torch.cat(test_user_ids).long(),
                         torch.cat(test_item_ids).long(),
                         torch.cat(test_ratings), num_items=interactions.num_items)
 

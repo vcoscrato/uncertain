@@ -12,7 +12,7 @@ import os
 import h5py
 
 from uncertain.datasets import transport
-from uncertain.interactions import ExplicitInteractions
+from uncertain.interactions import Interactions
 
 VARIANTS = ('100K',
             '1M',
@@ -69,4 +69,4 @@ def get_movielens_dataset(variant='100K'):
 
     user, items, ratings, _ = _get_movielens(url)
 
-    return ExplicitInteractions(user, items, ratings)
+    return Interactions((user, items), ratings)

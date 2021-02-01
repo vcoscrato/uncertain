@@ -4,31 +4,23 @@ import scipy.sparse as sp
 from uncertain.utils import gpu, cpu
 
 
-def _tensor_or_array(tensor):
-    if tensor is None:
-        return None
-    if 'torch' in str(tensor.__class__):
-        return tensor
-    else:
-        if tensor.dtype == np.int32:
-            return torch.from_numpy(tensor.astype(np.int64))
-        return torch.from_numpy(tensor)
-
-
-class ExplicitInteractions(object):
+class Interactions(object):
     """
-    For *explicit feedback* scenarios: user ids, item ids, and
-    ratings should be provided for all user-item-rating triplets
-    that were observed in the dataset.
+    For *explicit feedback* scenarios: interaction and
+    ratings should be provided for all user-item-rating
+    triplets that were observed in the dataset.
 
     Parameters
     ----------
-    user_ids: array of np.int32
-        array of user ids of the user-item pairs
-    item_ids: array of np.int32
-        array of item ids of the user-item pairs
-    ratings: array of np.float32, optional
-        array of ratings
+    interactions: tensor or tuple
+        A tensor in which lines correspond to
+        interaction instances in the format
+        (user_id, item_id). Or a tuple containing
+        the user_ids and item_ids arrays or tensors.
+    ratings: tensor or array
+        A tensor or array containing the ratings
+        for each interaction. If None implicit
+        signals are assumed.
     num_users: int, optional
         Number of distinct users in the dataset.
         Must be larger than the maximum user id
@@ -40,55 +32,81 @@ class ExplicitInteractions(object):
 
     Attributes
     ----------
-    user_ids: array of np.int32
-        array of user ids of the user-item pairs
-    item_ids: array of np.int32
-        array of item ids of the user-item pairs
-    ratings: array of np.float32, optional
-        array of ratings
-    num_users: int, optional
+    data: tensor
+        A tensor in which lines correspond to
+        data instances in the format (user_id,
+        item_id).
+    ratings: tensor
+        A tensor or array containing the ratings
+        for each interaction. If None implicit
+        signals are assumed.
+    num_users: int
         Number of distinct users in the dataset.
-    num_items: int, optional
+    num_items: int
         Number of distinct items in the dataset.
     """
 
-    def __init__(self, user_ids, item_ids, ratings,
-                 num_users=None,
-                 num_items=None):
+    def __init__(self, interactions, ratings=None, num_users=None, num_items=None):
 
-        self.num_users = num_users or int(user_ids.max() + 1)
-        self.num_items = num_items or int(item_ids.max() + 1)
+        self.interactions = (interactions if torch.is_tensor(interactions) else torch.tensor(interactions).T).long()
+        assert self.interactions.shape[1] == 2, "Interactions should be (n_instances, 2) shaped."
 
-        self.user_ids = _tensor_or_array(user_ids)
-        self.item_ids = _tensor_or_array(item_ids)
-        self.ratings = _tensor_or_array(ratings)
+        self.ratings = ratings if torch.is_tensor(ratings) else torch.tensor(ratings)
+
+        self.num_users = num_users or int(self.interactions[:, 0].max() + 1)
+        self.num_items = num_items or int(self.interactions[:, 1].max() + 1)
+
+    @property
+    def type(self):
+        return 'Explicit' if self.ratings is not None else 'Implicit'
+
+    def __len__(self):
+
+        return self.interactions.shape[0]
 
     def __repr__(self):
 
-        return ('<Explicit interactions dataset ({num_users} users x {num_items} items '
-                'x {num_interactions} interactions)>'
+        return ('<{type} interactions dataset ({num_users} users x {num_items} items '
+                'x {num_interactions} interactions).>'
                 .format(
+                    type=self.type,
                     num_users=self.num_users,
                     num_items=self.num_items,
                     num_interactions=len(self)
                 ))
 
-    def __len__(self):
-
-        return len(self.user_ids)
-
     def __getitem__(self, idx):
 
-        return self.user_ids[idx], self.item_ids[idx], self.ratings[idx]
+        return self.interactions[idx], self.ratings[idx]
+
+    def cuda(self):
+        """
+        Move data to gpu.
+        """
+
+        self.interactions = self.interactions.cuda()
+        self.ratings = self.ratings.cuda()
+
+        return self
+
+    def cpu(self):
+        """
+        Move data to cpu.
+        """
+
+        self.interactions = self.interactions.cpu()
+        self.ratings = self.ratings.cpu()
+
+        return self
 
     def tocoo(self):
         """
         Transform to a scipy.sparse COO matrix.
         """
 
-        row = cpu(self.user_ids)
-        col = cpu(self.item_ids)
-        data = cpu(self.ratings)
+        row = self.interactions[:, 0].cpu()
+        col = self.interactions[:, 1].cpu()
+        data = self.ratings.cpu() if self.type == 'Explicit' else torch.ones_like(col)
 
         return sp.coo_matrix((data, (row, col)),
                              shape=(self.num_users, self.num_items))
@@ -100,28 +118,6 @@ class ExplicitInteractions(object):
 
         return self.tocoo().tocsr()
 
-    def gpu(self):
-        """
-        Move data to gpu.
-        """
-
-        self.user_ids = gpu(self.user_ids, True)
-        self.item_ids = gpu(self.item_ids, True)
-        self.ratings = gpu(self.ratings, True)
-
-        return self
-
-    def cpu(self):
-        """
-        Move data to cpu.
-        """
-
-        self.user_ids = cpu(self.user_ids)
-        self.item_ids = cpu(self.item_ids)
-        self.ratings = cpu(self.ratings)
-
-        return self
-
     def shuffle(self, seed=None):
         """
         Shuffle interaction data.
@@ -130,165 +126,35 @@ class ExplicitInteractions(object):
         if seed is not None:
             torch.manual_seed(seed)
 
-        shuffle_indices = torch.randperm(len(self), device=self.user_ids.device)
+        shuffle_indices = torch.randperm(len(self), device=self.interactions.device)
         
-        self.user_ids = self.user_ids[shuffle_indices]
-        self.item_ids = self.item_ids[shuffle_indices]
+        self.interactions = self.interactions[shuffle_indices]
         self.ratings = self.ratings[shuffle_indices]
 
     def get_user_support(self):
 
-        count = torch.zeros(self.num_users, device=self.user_ids.device)
+        count = torch.zeros(self.num_users, device=self.interactions.device)
         for i in range(self.num_users):
-            count[i] += (self.user_ids == i).sum()
+            count[i] += (self.interactions[:, 0] == i).sum()
 
         return count
 
     def get_item_support(self):
 
-        count = torch.zeros(self.num_items, device=self.item_ids.device)
+        count = torch.zeros(self.num_items, device=self.interactions.device)
         for i in range(self.num_items):
-            count[i] += (self.item_ids == i).sum()
+            count[i] += (self.interactions[:, 1] == i).sum()
 
         return count
     
     def get_item_variance(self):
 
-        variances = torch.empty(self.num_items, device=self.item_ids.device)
+        if self.type == 'Implicit':
+            raise TypeError('Item variance not defined for implicit ratings.')
+
+        variances = torch.empty(self.num_items, device=self.interactions.device)
         for i in range(self.num_items):
-            variances[i] = self.ratings[self.item_ids == i].var()
+            variances[i] = self.ratings[self.interactions[1] == i].var()
         variances[torch.isnan(variances)] = 0
 
         return variances
-
-
-class ImplicitInteractions(object):
-    """
-    For *explicit feedback* scenarios: user ids and item ids
-    should be provided for all user-item pairs
-    that were observed in the dataset.
-
-    Parameters
-    ----------
-    user_ids: array of np.int32
-        array of user ids of the user-item pairs
-    item_ids: array of np.int32
-        array of item ids of the user-item pairs
-    num_users: int, optional
-        Number of distinct users in the dataset.
-        Must be larger than the maximum user id
-        in user_ids.
-    num_items: int, optional
-        Number of distinct items in the dataset.
-        Must be larger than the maximum item id
-        in item_ids.
-
-    Attributes
-    ----------
-    user_ids: array of np.int32
-        array of user ids of the user-item pairs
-    item_ids: array of np.int32
-        array of item ids of the user-item pairs
-    ratings: array of np.float32, optional
-        array of ratings
-    num_users: int, optional
-        Number of distinct users in the dataset.
-    num_items: int, optional
-        Number of distinct items in the dataset.
-    """
-
-    def __init__(self, user_ids, item_ids,
-                 num_users=None,
-                 num_items=None):
-
-        self.num_users = num_users or int(user_ids.max() + 1)
-        self.num_items = num_items or int(item_ids.max() + 1)
-
-        self.user_ids = _tensor_or_array(user_ids)
-        self.item_ids = _tensor_or_array(item_ids)
-
-    def __repr__(self):
-
-        return ('<Implicit interactions dataset ({num_users} users x {num_items} items '
-                'x {num_interactions} interactions)>'
-            .format(
-            num_users=self.num_users,
-            num_items=self.num_items,
-            num_interactions=len(self)
-        ))
-
-    def __len__(self):
-
-        return len(self.user_ids)
-
-    def __getitem__(self, idx):
-
-        return self.user_ids[idx], self.item_ids[idx]
-
-    def tocoo(self):
-        """
-        Transform to a scipy.sparse COO matrix.
-        """
-
-        row = cpu(self.user_ids)
-        col = cpu(self.item_ids)
-        data = cpu(np.ones(len(self)))
-
-        return sp.coo_matrix((data, (row, col)),
-                             shape=(self.num_users, self.num_items))
-
-    def tocsr(self):
-        """
-        Transform to a scipy.sparse CSR matrix.
-        """
-
-        return self.tocoo().tocsr()
-
-    def gpu(self):
-        """
-        Move data to gpu.
-        """
-
-        self.user_ids = gpu(self.user_ids, True)
-        self.item_ids = gpu(self.item_ids, True)
-
-        return self
-
-    def cpu(self):
-        """
-        Move data to cpu.
-        """
-
-        self.user_ids = cpu(self.user_ids)
-        self.item_ids = cpu(self.item_ids)
-
-        return self
-
-    def shuffle(self, seed=None):
-        """
-        Shuffle interaction data.
-        """
-
-        if seed is not None:
-            torch.manual_seed(seed)
-
-        shuffle_indices = torch.randperm(len(self), device=self.user_ids.device)
-
-        self.user_ids = self.user_ids[shuffle_indices]
-        self.item_ids = self.item_ids[shuffle_indices]
-
-    def get_user_support(self):
-
-        count = torch.zeros(self.num_users, device=self.user_ids.device)
-        for i in range(self.num_users):
-            count[i] += (self.user_ids == i).sum()
-
-        return count
-
-    def get_item_support(self):
-
-        count = torch.zeros(self.num_items, device=self.item_ids.device)
-        for i in range(self.num_items):
-            count[i] += (self.item_ids == i).sum()
-
-        return count

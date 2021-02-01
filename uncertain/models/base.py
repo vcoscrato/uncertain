@@ -1,71 +1,17 @@
 import torch
-from uncertain.metrics import rmse_score, recommendation_score, correlation, rpi_score, classification
 from uncertain.utils import minibatch
+from uncertain.metrics import rmse_score, recommendation_score, correlation, rpi_score, classification
 
 
-class LinearUncertaintyEstimator(object):
-    """
-    Basic uncertainty estimator that uses the
-    sum of static user and/or item coefficients.
+class BaseRecommender(object):
 
-
-    Parameters
-    ----------
-    user_uncertainty: tensor
-        A tensor containing the uncertainty coefficient for each user.
-    item_uncertainty: tensor
-        A tensor containing the uncertainty coefficient for each user.
-    """
-
-    def __init__(self,
-                 user_uncertainty,
-                 item_uncertainty):
-
-        self.user = user_uncertainty
-        self.item = item_uncertainty
-
-    def predict(self, user_ids, item_ids):
-
-        user_uncertainty = self.user[user_ids] if self.user is not None else 0
-        item_uncertainty = self.item[item_ids] if self.item is not None else 0
-
-        return user_uncertainty + item_uncertainty
-
-
-class UncertainWrapper(object):
-    """
-    Wraps a rating estimator with an uncertainty estimator.
-
-    Parameters
-    ----------
-    ratings: :class:`uncertain.models.BaseRecommender`
-        A rating estimator.
-    uncertainty: :class:`uncertain.UncertaintyWrapper.LinearUncertaintyEstimator
-        An uncertainty estimator: A class containing a predict
-        function that returns an uncertainty estimate for the
-        given user, item pairs.
-    """
-
-    def __init__(self,
-                 ratings,
-                 uncertainty):
-
-        self.ratings = ratings
-        self.uncertainty = uncertainty
-
-    @property
-    def is_uncertain(self):
-        return True
-
-    def predict(self, user_ids, item_ids=None):
-
-        user_ids, item_ids = self.ratings._predict_process_ids(user_ids, item_ids)
-
-        ratings = self.ratings.predict(user_ids, item_ids)
-        uncertainty = self.uncertainty.predict(user_ids, item_ids)
-
-        return ratings, uncertainty
-
+    def __init__(self, num_users=None, num_items=None, num_ratings=None, desc=None):
+        
+        self.num_users = num_users
+        self.num_items = num_items
+        self.num_ratings = num_ratings
+        self._desc = desc
+        
     def recommend(self, user_id, train=None, top=10):
 
         predictions = self.predict(user_id)
@@ -78,7 +24,7 @@ class UncertainWrapper(object):
             predictions = -predictions[0]
 
         if train is not None:
-            rated = train.item_ids[train.user_ids == user_id]
+            rated = train.interactions[:, 1][train.interactions[:, 0] == user_id]
             predictions[rated] = float('inf')
 
         idx = predictions.argsort()
@@ -95,14 +41,14 @@ class UncertainWrapper(object):
         est = []
         if self.is_uncertain:
             unc = []
-            for u, i, _ in loader:
-                predictions = self.predict(u, i)
+            for interactions, _ in loader:
+                predictions = self.predict(interactions[:, 0], interactions[:, 1])
                 est.append(predictions[0])
                 unc.append(predictions[1])
             unc = torch.hstack(unc)
         else:
-            for u, i, _ in loader:
-                est.append(self.predict(u, i))
+            for interactions, _ in loader:
+                est.append(self.predict(interactions[:, 0], interactions[:, 1]))
         est = torch.hstack(est)
 
         p, r, a, s = recommendation_score(self, test, train, max_k=10)

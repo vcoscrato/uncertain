@@ -17,10 +17,10 @@ def cpu(tensor):
         return tensor
 
 
-def minibatch(interactions, batch_size):
+def minibatch(data, batch_size):
 
-    for i in range(0, len(interactions), batch_size):
-        yield interactions[i:i + batch_size]
+    for i in range(0, len(data), batch_size):
+        yield data.interactions[i:i + batch_size], data.ratings[i:i + batch_size]
 
 
 def assert_no_grad(variable):
