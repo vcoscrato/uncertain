@@ -5,6 +5,7 @@ from uncertain import Interactions
 from uncertain.models.base import BaseRecommender
 from uncertain.cross_validation import random_train_test_split
 from uncertain.models import FunkSVD
+from uncertain.utils import minibatch
 
 
 class LinearUncertainty(object):
@@ -42,6 +43,7 @@ class CVUncertainty(object):
 
         self.recommender = deepcopy(recommender)
         self.recommender._path += '_temp'
+        self.recommender._verbose = False
         self.params = params
         self.uncertainty = None
 
@@ -52,15 +54,23 @@ class CVUncertainty(object):
         model_cv = deepcopy(self.recommender)
         model_cv.initialize(fold1)
         model_cv.fit(fold1, val)
-        errors2 = torch.abs(fold2.ratings - model_cv.predict(fold2.interactions[:, 0], fold2.interactions[:, 1]))
+        errors = torch.empty_like(fold2.ratings)
+        loader = minibatch(fold2, batch_size=int(1e6))
+        for minibatch_num, (interactions, ratings) in enumerate(loader):
+            preds = model_cv.predict(interactions[:, 0], interactions[:, 1])
+            errors[(minibatch_num * int(1e6)):((minibatch_num + 1) * int(1e6))] = torch.abs(ratings - preds)
 
         model_cv.initialize(fold2)
         model_cv.fit(fold2, val)
-        errors1 = torch.abs(fold1.ratings - model_cv.predict(fold1.interactions[:, 0], fold1.interactions[:, 1]))
+        errors_ = torch.empty_like(fold1.ratings)
+        loader = minibatch(fold1, batch_size=int(1e6))
+        for minibatch_num, (interactions, ratings) in enumerate(loader):
+            preds = model_cv.predict(interactions[:, 0], interactions[:, 1])
+            errors_[(minibatch_num * int(1e6)):((minibatch_num + 1) * int(1e6))] = torch.abs(ratings - preds)
 
         os.remove(self.recommender._path)
-        train_errors = Interactions(torch.vstack((fold1.interactions, fold2.interactions)),
-                                    torch.cat((errors1, errors2)), num_users=train.num_users, num_items=train.num_items)
+        train_errors = Interactions(torch.vstack((fold2.interactions, fold1.interactions)),
+                                    torch.cat((errors, errors_)), num_users=train.num_users, num_items=train.num_items)
 
         train_set, val_set = random_train_test_split(train_errors, test_percentage=0.2, random_state=0)
         self.uncertainty = FunkSVD(**self.params)
