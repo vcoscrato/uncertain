@@ -2,6 +2,7 @@ from torch import tensor
 import torch
 from matplotlib import pyplot as plt
 import numpy as np
+from pandas import DataFrame
 
 baseline = {'RMSE': tensor(0.8646, device='cuda:0'), 'Precision': tensor([0.1041, 0.0961, 0.0903, 0.0858, 0.0823, 0.0793, 0.0768, 0.0748, 0.0729,
         0.0712], device='cuda:0'), 'Recall': tensor([0.0065, 0.0117, 0.0162, 0.0202, 0.0238, 0.0272, 0.0304, 0.0335, 0.0365,
@@ -61,15 +62,37 @@ ivar = {'RMSE': tensor(0.8646, device='cuda:0'), 'Precision': tensor([0.1041, 0.
         0.0812, 0.0797, 0.0760, 0.0731, 0.0695, 0.0661, 0.0601, 0.0549, 0.0495,
         0.0433, 0.0358]), 'RRI': tensor([-0.0105,  0.0021,  0.0120,  0.0152,  0.0191,  0.0240,  0.0241,  0.0226,
          0.0232]), 'Correlation': (tensor(-0.1147, device='cuda:0'), tensor(-0.0956, device='cuda:0')), 'RPI': tensor(-0.4536, device='cuda:0'), 'Classification': (-0.5262232536814566, 0.566632401794646)}
+funksvdcv = {'RMSE': tensor(0.8646, device='cuda:0'), 'Precision': tensor([0.1041, 0.0961, 0.0903, 0.0858, 0.0823, 0.0792, 0.0768, 0.0748, 0.0729,
+             0.0712], device='cuda:0'), 'Recall': tensor([0.0065, 0.0117, 0.0162, 0.0201, 0.0238, 0.0272, 0.0304, 0.0335, 0.0365,
+             0.0393], device='cuda:0'), 'Quantile RMSE': tensor([0.8430, 0.7080, 0.7042, 0.7153, 0.7287, 0.7441, 0.7606, 0.7757, 0.7916,
+             0.8083, 0.8265, 0.8443, 0.8649, 0.8862, 0.9115, 0.9389, 0.9702, 1.0146,
+             1.0767, 1.2076]), 'Quantile MAP': tensor([0.0081, 0.0166, 0.0282, 0.0436, 0.0607, 0.0700, 0.0801, 0.0853, 0.0887,
+             0.0913, 0.0930, 0.0944, 0.0939, 0.0923, 0.0916, 0.0894, 0.0856, 0.0808,
+             0.0737, 0.0572]), 'RRI': tensor([-0.0152, -0.0380, -0.0555, -0.0713, -0.0858, -0.0990, -0.1100, -0.1189,
+             -0.1273]), 'Correlation': (tensor(0.1643, device='cuda:0'), tensor(0.1591, device='cuda:0')), 'RPI': tensor(0.6628, device='cuda:0'), 'Classification': (-0.5214437415234605, 0.6040501355273163)}
+biascv = {'RMSE': tensor(0.8646, device='cuda:0'), 'Precision': tensor([0.1041, 0.0961, 0.0903, 0.0858, 0.0823, 0.0792, 0.0768, 0.0748, 0.0729,
+          0.0712], device='cuda:0'), 'Recall': tensor([0.0065, 0.0117, 0.0162, 0.0201, 0.0238, 0.0272, 0.0304, 0.0335, 0.0365,
+          0.0393], device='cuda:0'), 'Quantile RMSE': tensor([0.5740, 0.6304, 0.6619, 0.6880, 0.7130, 0.7327, 0.7549, 0.7763, 0.7961,
+          0.8169, 0.8374, 0.8596, 0.8824, 0.9066, 0.9357, 0.9673, 1.0063, 1.0523,
+          1.1201, 1.2561]), 'Quantile MAP': tensor([0.0641, 0.0790, 0.0827, 0.0838, 0.0835, 0.0823, 0.0820, 0.0813, 0.0794,
+          0.0790, 0.0760, 0.0743, 0.0724, 0.0689, 0.0674, 0.0628, 0.0594, 0.0550,
+          0.0501, 0.0413]), 'RRI': tensor([ 0.0018, -0.0206, -0.0397, -0.0498, -0.0594, -0.0684, -0.0752, -0.0783,
+          -0.0816]), 'Correlation': (tensor(0.2534, device='cuda:0'), tensor(0.2221, device='cuda:0')), 'RPI': tensor(0.9728, device='cuda:0'), 'Classification': (-0.508943102704638, 0.6466635989126877)}
 
 evaluation = {'Baseline': baseline,
+              'User support': usup,
+              'Item support': isup,
+              'Item variance': ivar,
+              'FunkSVD-CV': funksvdcv,
+              'Bias-CV': biascv,
               'CPMF': CPMF,
               'OrdRec': OrdRec,
               'Ensemble': Ensemble,
-              'Resample': Resample,
-              'User support': usup,
-              'Item support': isup,
-              'Item variance': ivar}
+              'Resample': Resample}
+
+keys = ['Baseline', 'Ensemble', 'CPMF', 'OrdRec']
+rmse = [evaluation[key]['RMSE'].item() for key in keys]
+DataFrame(rmse, index=keys, columns=['RMSE'])
 
 color=iter(plt.cm.rainbow(np.linspace(0, 1, 4)))
 f, ax = plt.subplots(nrows=2, figsize=(5, 10))
@@ -89,30 +112,27 @@ ax[1].legend(ncol=2)
 f.tight_layout()
 f.savefig('Empirical study/Netflix/precision_recall.pdf')
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-from pandas import DataFrame
 keys = list(evaluation.keys())[1:]
-out = DataFrame(np.zeros((3, 7)), index=['RPI', 'Pearson', 'Spearman'], columns=keys)
+out = DataFrame(np.zeros((3, 9)), index=['RPI', 'Pearson', 'Spearman'], columns=keys)
 for key in keys:
     out[key] = (evaluation[key]['RPI'].item(),
                 evaluation[key]['Correlation'][0].item(),
                 evaluation[key]['Correlation'][1].item())
 out.T
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

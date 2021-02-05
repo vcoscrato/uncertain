@@ -27,3 +27,29 @@ model = ImplicitFactorizationModel.ImplicitFactorizationModel(embedding_dim=10, 
                                                               path='Empirical study/lastfm.pth')
 model.fit(data, data)
 plays.sum()
+
+
+
+
+
+
+
+import torch
+import numpy as np
+from pandas import factorize
+
+from uncertain.models import FunkSVD, CPMF, OrdRec, MultiModelling
+from uncertain.models import LinearUncertainty, CVUncertainty, PlugIn
+from uncertain.datasets.movielens import get_movielens_dataset
+from uncertain.cross_validation import random_train_test_split
+
+ML = get_movielens_dataset(variant='1M').cuda()
+ML.ratings = torch.ones_like(ML.ratings)
+train, test = random_train_test_split(ML, test_percentage=0.2, random_state=0)
+test, val = random_train_test_split(test, test_percentage=0.5, random_state=0)
+
+CPMF_params = {'embedding_dim': 50, 'l2': 0, 'learning_rate': 5,
+               'batch_size': 512, 'path': 'Empirical study/cpmf.pth', 'use_cuda': True}
+cpmf = CPMF(**CPMF_params)
+cpmf.fit(train, val)
+print(cpmf.evaluate(test, train))

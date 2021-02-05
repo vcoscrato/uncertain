@@ -52,6 +52,7 @@ class Interactions(object):
         assert self.interactions.shape[1] == 2, "Interactions should be (n_instances, 2) shaped."
 
         self.ratings = ratings if torch.is_tensor(ratings) else torch.tensor(ratings)
+        assert len(self.ratings) == self.interactions.shape[0], "Interaction and ratings should have same length."
 
         self.num_users = num_users or int(self.interactions[:, 0].max() + 1)
         self.num_items = num_items or int(self.interactions[:, 1].max() + 1)
@@ -154,7 +155,7 @@ class Interactions(object):
 
         variances = torch.empty(self.num_items, device=self.interactions.device)
         for i in range(self.num_items):
-            variances[i] = self.ratings[self.interactions[1] == i].var()
+            variances[i] = self.ratings[self.interactions[:, 1] == i].var()
         variances[torch.isnan(variances)] = 0
 
         return variances
