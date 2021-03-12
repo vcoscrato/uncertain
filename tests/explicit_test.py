@@ -13,14 +13,14 @@ train, test = random_train_test_split(ML, test_percentage=0.2, random_state=0)
 test, val = random_train_test_split(test, test_percentage=0.5, random_state=0)
 
 MF_params = {'embedding_dim': 50, 'l2': 0, 'learning_rate': 2,
-             'batch_size': 512, 'path': 'Legacy/Empirical study/baseline.pth', 'use_cuda': True}
+             'batch_size': 512, 'path': 'test_models/baseline.pth', 'use_cuda': True}
 baseline = FunkSVD(**MF_params)
 baseline.initialize(train)
 baseline.fit(train, val)
 #print(baseline.evaluate_zhu(test, relevance_threshold=4, max_k=5))
 
 CPMF_params = {'embedding_dim': 50, 'l2': 0, 'learning_rate': 4,
-               'batch_size': 512, 'path': 'Legacy/Empirical study/cpmf.pth', 'use_cuda': True}
+               'batch_size': 512, 'path': 'test_models/cpmf.pth', 'use_cuda': True}
 cpmf = CPMF(**CPMF_params)
 cpmf.initialize(train)
 cpmf.fit(train, val)
@@ -44,23 +44,23 @@ item_variance = PlugIn(baseline, LinearUncertainty(None, train.get_item_variance
 #print(item_variance.evaluate_zhu(test, relevance_threshold=4, max_k=5))
 
 MF_params = {'embedding_dim': 50, 'l2': 0, 'learning_rate': 2,
-             'batch_size': 512, 'path': 'Legacy/Empirical study/funksvdcv.pth', 'use_cuda': True}
+             'batch_size': 512, 'path': 'test_models/funksvdcv.pth', 'use_cuda': True}
 uncertainty = FunkSVD(**MF_params)
 funksvdcv = CVUncertainty(recommender=baseline, uncertainty=uncertainty)
 funksvdcv.fit(train, val)
 funksvdcv = PlugIn(baseline, funksvdcv.uncertainty)
 #print(funksvdcv.evaluate_zhu(test, relevance_threshold=4, max_k=5))
 
-MF_params = {'embedding_dim': 0, 'l2': 0, 'learning_rate': 2,
-             'batch_size': 512, 'path': 'Legacy/Empirical study/biascv.pth', 'use_cuda': True}
+MF_params = {'l2': 0, 'learning_rate': 2, 'batch_size': 512, 
+             'path': 'test_models/biascv.pth', 'use_cuda': True}
 uncertainty = Linear(**MF_params)
-biascv = CVUncertainty(recommender=baseline, params=uncertainty)
+biascv = CVUncertainty(recommender=baseline, uncertainty=uncertainty)
 biascv.fit(train, val)
 biascv = PlugIn(baseline, biascv.uncertainty)
 #print(biascv.evaluate_zhu(test, relevance_threshold=4, max_k=5))
 
 OrdRec_params = {'embedding_dim': 50, 'l2': 0, 'learning_rate': 10,
-                 'batch_size': 512, 'path': 'Legacy/Empirical study/ordrec.pth', 'use_cuda': True}
+                 'batch_size': 512, 'path': 'test_models/ordrec.pth', 'use_cuda': True}
 factor = factorize(train.ratings.cpu(), sort=True)
 rating_labels = torch.from_numpy(factor[1].astype(np.float64)).cuda()
 train.ratings = torch.from_numpy(factor[0]).cuda()

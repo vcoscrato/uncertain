@@ -1,7 +1,7 @@
 **/.idea
 **/.ipynb_checkpoints
 **/__pycache__
-Legacy/*
+Legacy/
 Netflix/Fitted/
 Movielens/Fitted/
 

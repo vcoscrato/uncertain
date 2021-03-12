@@ -45,7 +45,6 @@ class CVUncertainty(object):
         self.recommender._path += '_temp'
         self.recommender._verbose = False
         self.uncertainty = uncertainty
-        self.uncertainty = None
 
     def fit(self, train, val):
 
