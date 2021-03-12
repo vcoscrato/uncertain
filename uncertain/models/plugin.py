@@ -2,7 +2,7 @@ import os
 import torch
 from copy import deepcopy
 from uncertain import Interactions
-from uncertain.models.base import BaseRecommender
+from uncertain.models.base import Recommender
 from uncertain.cross_validation import random_train_test_split
 from uncertain.models import FunkSVD
 from uncertain.utils import minibatch
@@ -39,12 +39,12 @@ class LinearUncertainty(object):
 
 class CVUncertainty(object):
 
-    def __init__(self, recommender, params):
+    def __init__(self, recommender, uncertainty):
 
         self.recommender = deepcopy(recommender)
         self.recommender._path += '_temp'
         self.recommender._verbose = False
-        self.params = params
+        self.uncertainty = uncertainty
         self.uncertainty = None
 
     def fit(self, train, val):
@@ -57,7 +57,7 @@ class CVUncertainty(object):
         errors = torch.empty_like(fold2.ratings)
         loader = minibatch(fold2, batch_size=int(1e6))
         for minibatch_num, (interactions, ratings) in enumerate(loader):
-            preds = model_cv.predict(interactions[:, 0], interactions[:, 1])
+            preds = model_cv.predict(interactions)
             errors[(minibatch_num * int(1e6)):((minibatch_num + 1) * int(1e6))] = torch.abs(ratings - preds)
 
         model_cv.initialize(fold2)
@@ -65,7 +65,7 @@ class CVUncertainty(object):
         errors_ = torch.empty_like(fold1.ratings)
         loader = minibatch(fold1, batch_size=int(1e6))
         for minibatch_num, (interactions, ratings) in enumerate(loader):
-            preds = model_cv.predict(interactions[:, 0], interactions[:, 1])
+            preds = model_cv.predict(interactions)
             errors_[(minibatch_num * int(1e6)):((minibatch_num + 1) * int(1e6))] = torch.abs(ratings - preds)
 
         os.remove(self.recommender._path)
@@ -73,11 +73,10 @@ class CVUncertainty(object):
                                     torch.cat((errors, errors_)), num_users=train.num_users, num_items=train.num_items)
 
         train_set, val_set = random_train_test_split(train_errors, test_percentage=0.2, random_state=0)
-        self.uncertainty = FunkSVD(**self.params)
         self.uncertainty.fit(train_set, val_set)
 
 
-class PlugIn(BaseRecommender):
+class PlugIn(Recommender):
     """
     Wraps a rating estimator with an uncertainty estimator.
 
@@ -98,17 +97,15 @@ class PlugIn(BaseRecommender):
         self.ratings = ratings
         self.uncertainty = uncertainty
 
-        super().__init__(ratings.num_users, ratings.num_items, ratings.num_ratings)
+        super().__init__(ratings.num_users, ratings.num_items, ratings.num_ratings, ratings._use_cuda)
 
     @property
     def is_uncertain(self):
         return True
 
-    def predict(self, user_ids, item_ids=None):
+    def predict(self, interactions=None, user_ids=None):
 
-        user_ids, item_ids = self.ratings._predict_process_ids(user_ids, item_ids)
-
-        ratings = self.ratings.predict(user_ids, item_ids)
-        uncertainty = self.uncertainty.predict(user_ids, item_ids)
+        ratings = self.ratings.predict(interactions, user_ids)
+        uncertainty = self.uncertainty.predict(interactions, user_ids)
 
         return ratings, uncertainty

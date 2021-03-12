@@ -1,34 +1,34 @@
+import os
 import torch
 import numpy as np
-from uncertain.models.base import BaseRecommender
-from uncertain.utils import gpu, minibatch
+from uncertain.models.base import Recommender
+from uncertain.utils import gpu, minibatch, sample_items
 from uncertain.representations import BiasNet, FunkSVDNet, CPMFNet, OrdRecNet
-from uncertain.losses import regression_loss, gaussian_loss, max_prob_loss
+from uncertain.losses import funk_svd_loss, cpmf_loss, max_prob_loss
 
 
-class LatentFactorRecommender(BaseRecommender):
+class LatentFactorRecommender(Recommender):
 
     def __init__(self,
                  batch_size,
                  learning_rate,
                  use_cuda,
                  path,
-                 verbose=True):
+                 verbose):
 
-        super().__init__()
-
-        self._lr = learning_rate
         self._batch_size = batch_size
-        self._use_cuda = use_cuda
+        self._lr = learning_rate
         self._path = path
         self._verbose = verbose
 
+        self.type = None
         self._net = None
         self._optimizer = None
-        self._loss_func = None
         self.train_loss = None
         self.test_loss = None
         self.min_val_loss = None
+
+        super().__init__(use_cuda=use_cuda)
 
     def __repr__(self):
 
@@ -43,45 +43,71 @@ class LatentFactorRecommender(BaseRecommender):
         ))
 
     @property
-    def is_uncertain(self):
-        return 'basic' not in self._desc
-
-    @property
     def _initialized(self):
         return self._net is not None
 
-    def _predict_process_ids(self, user_ids, item_ids):
+    def initialize(self, interactions):
 
-        if item_ids is None:
-            item_ids = torch.arange(self.num_items)
+        self.type = interactions.type
 
-        if np.isscalar(user_ids):
-            user_ids = torch.tensor(user_ids)
+        self.train_loss = []
+        self.test_loss = []
+        self.min_val_loss = float('inf')
 
-        if item_ids.size() != user_ids.size():
-            user_ids = user_ids.expand(item_ids.size())
+        (self.num_users,
+         self.num_items,
+         self.num_ratings) = (interactions.num_users,
+                              interactions.num_items,
+                              len(interactions))
 
-        user_var = gpu(user_ids, self._use_cuda)
-        item_var = gpu(item_ids, self._use_cuda)
+        self._net = self._construct_net()
+        self._load()
 
-        return user_var.squeeze(), item_var.squeeze()
+        self._optimizer = torch.optim.SGD(
+            self._net.parameters(),
+            lr=self._lr,
+            weight_decay=self._l2
+            )
 
-    def _one_epoch(self, interactions):
+    def _load(self):
+        if os.path.exists(self._path):
+            self._net.load_state_dict(torch.load(self._path))
+            if self._verbose:
+                print('Previous training file encountered. Loading saved weights.')
+
+    def _forward_pass(self, batch_interactions, batch_ratings):
+
+        predictions = self._net(batch_interactions[:, 0], batch_interactions[:, 1])
+        if self.type == 'Explicit':
+            return self._loss_func(predictions, batch_ratings)
+        else:
+            predictions = self._net(batch_interactions[:, 0], batch_interactions[:, 1])
+            negative_predictions = self._get_negative_prediction(batch_interactions[:, 0])
+            return self._loss_func(predictions, predicted_negative=negative_predictions)
+
+    def _get_negative_prediction(self, user_ids):
+
+        negative_items = sample_items(
+            self.num_items,
+            len(user_ids))
+        negative_var = gpu(torch.from_numpy(negative_items), self._use_cuda)
+
+        negative_prediction = self._net(user_ids, negative_var)
+
+        return negative_prediction
+
+    def _one_epoch(self, loader):
 
         epoch_loss = 0
-
-        loader = minibatch(interactions, batch_size=self._batch_size)
 
         for (minibatch_num,
              (batch_interactions,
               batch_ratings)) in enumerate(loader):
-            predictions = self._net(batch_interactions[:, 0], batch_interactions[:, 1])
-            loss = self._loss_func(batch_ratings, predictions)
 
+            loss = self._forward_pass(batch_interactions, batch_ratings)
             loss.backward()
             self._optimizer.step()
             self._optimizer.zero_grad()
-
             epoch_loss += loss.item()
 
         epoch_loss /= minibatch_num + 1
@@ -102,23 +128,19 @@ class LatentFactorRecommender(BaseRecommender):
             Test dataset for iterative evaluation.
         """
 
+        self.type = train.type
+
         if not self._initialized:
             self.initialize(train)
-            try:
-                self._net.load_state_dict(torch.load(self._path))
-                if self._verbose:
-                    print('Previous training file encountered. Loading and resuming training.')
-            except:
-                if self._verbose:
-                    print('No previous training file found. Starting training from scratch.')
 
         epoch = 1
         tol = False
         while True:
 
             train.shuffle()
+            train_loader = minibatch(train, batch_size=self._batch_size)
             self._net.train()
-            self.train_loss.append(self._one_epoch(train))
+            self.train_loss.append(self._one_epoch(train_loader))
 
             validation_loader = minibatch(validation, batch_size=int(1e5))
             epoch_loss = 0
@@ -127,9 +149,13 @@ class LatentFactorRecommender(BaseRecommender):
                 for (minibatch_num,
                      (batch_interactions,
                       batch_ratings)) in enumerate(validation_loader):
+
                     self._net.eval()
                     predictions = self._net(batch_interactions[:, 0], batch_interactions[:, 1])
-                    epoch_loss += self._loss_func(batch_ratings, predictions).item()
+                    if train.type == 'Implicit':
+                        epoch_loss += self._loss_func(predictions).item()
+                    else:
+                        epoch_loss += self._loss_func(predictions, batch_ratings).item()
 
                 epoch_loss /= minibatch_num + 1
 
@@ -158,7 +184,10 @@ class LatentFactorRecommender(BaseRecommender):
             if self._verbose:
                 print(out)
 
-    def _predict(self, user_ids, item_ids=None):
+        if self._path == os.getcwd()+'tmp':
+            os.remove(self._path)
+
+    def _predict(self, interactions=None, user_ids=None):
         """
         Make predictions: given a user id, compute the net forward pass.
 
@@ -182,12 +211,63 @@ class LatentFactorRecommender(BaseRecommender):
             Predicted scores for all items in item_ids.
         """
 
-        user_ids, item_ids = self._predict_process_ids(user_ids, item_ids)
-
+        user_ids, item_ids = self._predict_process_ids(interactions, user_ids)
         with torch.no_grad():
             out = self._net(user_ids, item_ids)
 
         return out
+
+
+class Linear(LatentFactorRecommender):
+    """
+    An Explicit feedback matrix factorization model.
+
+    Parameters
+    ----------
+    embedding_dim: int
+        The dimension of the latent factors. If 0, then
+        a bias model is used.
+    n_iter: int
+        Number of iterations to run.
+    batch_size: int
+        Minibatch size.
+    l2: float, optional
+        L2 loss penalty.
+    learning_rate: float
+        Initial learning rate.
+    use_cuda: boolean
+        Run the model on a GPU.
+    sparse: boolean
+        Use sparse gradients for embedding layers.
+    """
+
+    def __init__(self,
+                 batch_size,
+                 l2,
+                 learning_rate,
+                 use_cuda=False,
+                 path=os.getcwd() + 'tmp',
+                 sparse=False,
+                 verbose=True):
+
+        self._l2 = l2
+        self._sparse = sparse
+        self._loss_func = funk_svd_loss
+
+        super().__init__(batch_size, learning_rate, use_cuda, path, verbose)
+
+    @property
+    def is_uncertain(self):
+        return False
+
+    def _construct_net(self):
+
+        return gpu(BiasNet(self.num_users, self.num_items, self._sparse),
+                   self._use_cuda)
+
+    def predict(self, interactions=None, user_ids=None):
+
+        return self._predict(interactions, user_ids)
 
 
 class FunkSVD(LatentFactorRecommender):
@@ -218,54 +298,30 @@ class FunkSVD(LatentFactorRecommender):
                  batch_size,
                  l2,
                  learning_rate,
-                 use_cuda,
-                 path,
-                 sparse=False):
-
-        super().__init__(batch_size, learning_rate, use_cuda, path)
+                 use_cuda=False,
+                 path=os.getcwd()+'tmp',
+                 sparse=False,
+                 verbose=True):
 
         self._embedding_dim = embedding_dim
         self._l2 = l2
         self._sparse = sparse
+        self._loss_func = funk_svd_loss
 
-    def initialize(self, interactions):
+        super().__init__(batch_size, learning_rate, use_cuda, path, verbose)
+
+    @property
+    def is_uncertain(self):
+        return True
+
+    def _construct_net(self):
         
-        self.train_loss = []
-        self.test_loss = []
-        self.min_val_loss = float('inf')
+        return gpu(FunkSVDNet(self.num_users, self.num_items, self._embedding_dim, self._sparse),
+                   self._use_cuda)
 
-        (self.num_users,
-         self.num_items,
-         self.num_ratings) = (interactions.num_users,
-                              interactions.num_items,
-                              len(interactions))
+    def predict(self, interactions=None, user_ids=None):
 
-        if self._embedding_dim == 0:
-            self._net = gpu(BiasNet(self.num_users,
-                                    self.num_items,
-                                    self._sparse),
-                            self._use_cuda)
-            self._desc = 'basic-Linear recommender'
-
-        else:
-            self._net = gpu(FunkSVDNet(self.num_users,
-                                       self.num_items,
-                                       self._embedding_dim,
-                                       self._sparse),
-                            self._use_cuda)
-            self._desc = 'basic-FunkSVD'
-
-        self._optimizer = torch.optim.SGD(
-            self._net.parameters(),
-            lr=self._lr,
-            weight_decay=self._l2
-            )
-
-        self._loss_func = regression_loss
-
-    def predict(self, user_ids, item_ids=None):
-
-        return self._predict(user_ids, item_ids)
+        return self._predict(interactions, user_ids)
 
 
 class CPMF(LatentFactorRecommender):
@@ -275,45 +331,30 @@ class CPMF(LatentFactorRecommender):
                  batch_size,
                  l2,
                  learning_rate,
-                 use_cuda,
-                 path,
-                 sparse=False):
-        super().__init__(batch_size, learning_rate, use_cuda, path)
+                 use_cuda=False,
+                 path=os.getcwd()+'tmp',
+                 sparse=False,
+                 verbose=True):
 
-        self._desc = 'CPMF'
         self._embedding_dim = embedding_dim
         self._l2 = l2
         self._sparse = sparse
+        self._loss_func = cpmf_loss
 
-    def initialize(self, interactions):
+        super().__init__(batch_size, learning_rate, use_cuda, path, verbose)
 
-        self.train_loss = []
-        self.test_loss = []
-        self.min_val_loss = float('inf')
+    @property
+    def is_uncertain(self):
+        return True
 
-        (self.num_users,
-         self.num_items,
-         self.num_ratings) = (interactions.num_users,
-                              interactions.num_items,
-                              len(interactions))
+    def _construct_net(self):
 
-        self._net = gpu(CPMFNet(self.num_users,
-                                self.num_items,
-                                self._embedding_dim,
-                                self._sparse),
-                        self._use_cuda)
+        return gpu(CPMFNet(self.num_users, self.num_items, self._embedding_dim, self._sparse),
+                   self._use_cuda)
 
-        self._optimizer = torch.optim.SGD(
-            self._net.parameters(),
-            lr=self._lr,
-            weight_decay=self._l2
-        )
+    def predict(self, interactions=None, user_ids=None):
 
-        self._loss_func = gaussian_loss
-
-    def predict(self, user_ids, item_ids=None):
-        out = self._predict(user_ids, item_ids)
-
+        out = self._predict(interactions, user_ids)
         return out[0], out[1]
 
 
@@ -325,46 +366,32 @@ class OrdRec(LatentFactorRecommender):
                  batch_size,
                  l2,
                  learning_rate,
-                 use_cuda,
-                 path,
-                 sparse=False):
-        super().__init__(batch_size, learning_rate, use_cuda, path)
+                 use_cuda=False,
+                 path=os.getcwd()+'tmp',
+                 sparse=False,
+                 verbose=True):
 
-        self._desc = 'OrdRec'
         self._rating_labels = ratings_labels
         self._embedding_dim = embedding_dim
         self._l2 = l2
         self._sparse = sparse
-
-    def initialize(self, interactions):
-
-        self.train_loss = []
-        self.test_loss = []
-        self.min_val_loss = float('inf')
-
-        (self.num_users,
-         self.num_items,
-         self.num_ratings) = (interactions.num_users,
-                              interactions.num_items,
-                              len(interactions))
-
-        self._net = gpu(OrdRecNet(self.num_users,
-                                  self.num_items,
-                                  len(self._rating_labels),
-                                  self._embedding_dim,
-                                  self._sparse),
-                        self._use_cuda)
-
-        self._optimizer = torch.optim.SGD(
-            self._net.parameters(),
-            lr=self._lr,
-            weight_decay=self._l2
-        )
-
         self._loss_func = max_prob_loss
 
-    def predict(self, user_ids, item_ids=None, return_distribution=False):
-        distribution = self._predict(user_ids, item_ids)
+        super().__init__(batch_size, learning_rate, use_cuda, path, verbose)
+
+    @property
+    def is_uncertain(self):
+        return True
+
+    def _construct_net(self):
+
+        return gpu(OrdRecNet(self.num_users, self.num_items, len(self._rating_labels),
+                             self._embedding_dim, self._sparse),
+                   self._use_cuda)
+
+    def predict(self, interactions=None, user_ids=None, return_distribution=False):
+
+        distribution = self._predict(interactions, user_ids)
 
         if return_distribution:
             return distribution

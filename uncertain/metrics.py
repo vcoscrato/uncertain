@@ -1,8 +1,11 @@
 import torch
 import numpy as np
+from tqdm import tqdm
+from uncertain.utils import sample_items
 from sklearn.model_selection import KFold
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import roc_auc_score
+from sklearn.linear_model import LinearRegression, LogisticRegression
+from sklearn.metrics import roc_auc_score, r2_score
+from matplotlib import pyplot as plt
 
 
 def rmse_score(predictions, ratings):
@@ -51,16 +54,34 @@ def classification(error, uncertainty):
 
     splitter = KFold(n_splits=2, shuffle=True, random_state=0)
     targets = error > 1
-    likelihood = 0
     auc = 0
 
     for train_index, test_index in splitter.split(error):
         mod = LogisticRegression().fit(uncertainty[train_index].reshape(-1, 1), targets[train_index])
         probs = mod.predict_proba(uncertainty[test_index].reshape(-1, 1))
-        likelihood += np.log(probs[range(len(probs)), targets[test_index].astype(int)]).mean() / 2
         auc += roc_auc_score(targets[test_index], probs[:, 1]) / 2
 
-    return likelihood, auc
+    return auc
+
+
+def determination(error, uncertainty):
+
+    error = error.cpu().detach().numpy()
+    uncertainty = uncertainty.cpu().detach().numpy()
+
+    splitter = KFold(n_splits=2, shuffle=True, random_state=0)
+    r2 = 0
+
+    for train_index, test_index in splitter.split(error):
+        mod = LinearRegression().fit(uncertainty[train_index].reshape(-1, 1), error[train_index])
+        preds = mod.predict(uncertainty[test_index].reshape(-1, 1))
+        r2 += r2_score(error[test_index], preds) / 2
+
+    plt.scatter(uncertainty[test_index], error[test_index], color='black')
+    plt.plot(uncertainty[test_index], preds, color='blue', linewidth=3)
+    plt.show()
+
+    return r2
 
 
 def recommendation_score(model, test, train=None, relevance_threshold=4, max_k=10):
@@ -97,8 +118,11 @@ def recommendation_score(model, test, train=None, relevance_threshold=4, max_k=1
 
     for user_id in range(test.num_users):
 
-        targets = test.interactions[:, 1][torch.logical_and(test.interactions[:, 0] == user_id,
-                                                            test.ratings >= relevance_threshold)]
+        if relevance_threshold is not None:
+            targets = test.interactions[:, 1][torch.logical_and(test.interactions[:, 0] == user_id,
+                                                                test.ratings >= relevance_threshold)]
+        else:
+            targets = test.interactions[:, 1][test.interactions[:, 0] == user_id]
 
         if not len(targets):
             continue
@@ -128,3 +152,27 @@ def recommendation_score(model, test, train=None, relevance_threshold=4, max_k=1
         rri = torch.vstack(rri)
 
     return precision, recall, average_uncertainty, rri
+
+
+def pairwise(model, test):
+
+    rated_preds = model.predict(test.interactions[:, 0], test.interactions[:, 1])
+    rated_lim_inf = rated_preds[0] - 1.96 * rated_preds[1].sqrt()
+    counter = 0
+
+    for u in tqdm(range(test.num_users)):
+
+        idx_u = test.interactions[:, 0] == u
+        if idx_u.sum() == 0:
+            pass
+        rated = test.interactions[idx_u, 1]
+
+        u_lim_inf = rated_lim_inf[idx_u]
+
+        for idx in range(len(rated)):
+            negatives_ = torch.tensor(sample_items(test.num_items, 5), device=test.interactions.device)
+            negative_preds = model.predict(torch.full_like(negatives_, u), negatives_)
+            negative_lim_sup = negative_preds[0] + 1.96 * negative_preds[1].sqrt()
+            counter += (u_lim_inf[idx] < negative_lim_sup).sum()
+
+    return counter / (len(test)*5)

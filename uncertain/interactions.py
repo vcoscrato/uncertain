@@ -51,8 +51,11 @@ class Interactions(object):
         self.interactions = (interactions if torch.is_tensor(interactions) else torch.tensor(interactions).T).long()
         assert self.interactions.shape[1] == 2, "Interactions should be (n_instances, 2) shaped."
 
-        self.ratings = ratings if torch.is_tensor(ratings) else torch.tensor(ratings)
-        assert len(self.ratings) == self.interactions.shape[0], "Interaction and ratings should have same length."
+        if ratings is not None:
+            self.ratings = ratings if torch.is_tensor(ratings) else torch.tensor(ratings)
+            assert len(self.ratings) == self.interactions.shape[0], "Interaction and ratings should have same length."
+        else:
+            self.ratings = None
 
         self.num_users = num_users or int(self.interactions[:, 0].max() + 1)
         self.num_items = num_items or int(self.interactions[:, 1].max() + 1)
@@ -80,13 +83,22 @@ class Interactions(object):
 
         return self.interactions[idx], self.ratings[idx]
 
+    def users(self):
+
+        return self.interactions[:, 0]
+
+    def items(self):
+
+        return self.interactions[:, 1]
+
     def cuda(self):
         """
         Move data to gpu.
         """
 
         self.interactions = self.interactions.cuda()
-        self.ratings = self.ratings.cuda()
+        if self.ratings is not None:
+            self.ratings = self.ratings.cuda()
 
         return self
 
@@ -96,7 +108,8 @@ class Interactions(object):
         """
 
         self.interactions = self.interactions.cpu()
-        self.ratings = self.ratings.cpu()
+        if self.ratings is not None:
+            self.ratings = self.ratings.cpu()
 
         return self
 
@@ -119,6 +132,13 @@ class Interactions(object):
 
         return self.tocoo().tocsr()
 
+    def get_negative_items(self, user_id):
+
+        positive_items = self.interactions[self.interactions[:, 0] == user_id, 1]
+        negative_items = torch.tensor([i for i in range(self.num_items) if i not in positive_items],
+                                      device=positive_items.device)
+        return negative_items
+
     def shuffle(self, seed=None):
         """
         Shuffle interaction data.
@@ -130,7 +150,8 @@ class Interactions(object):
         shuffle_indices = torch.randperm(len(self), device=self.interactions.device)
         
         self.interactions = self.interactions[shuffle_indices]
-        self.ratings = self.ratings[shuffle_indices]
+        if self.type == 'Explicit':
+            self.ratings = self.ratings[shuffle_indices]
 
     def get_user_support(self):
 
@@ -155,7 +176,7 @@ class Interactions(object):
 
         variances = torch.empty(self.num_items, device=self.interactions.device)
         for i in range(self.num_items):
-            variances[i] = self.ratings[self.interactions[:, 1] == i].var()
+            variances[i] = self.ratings[self.interactions[:, 1] == i].float().var()
         variances[torch.isnan(variances)] = 0
 
         return variances

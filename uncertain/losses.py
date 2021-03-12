@@ -2,16 +2,20 @@ import torch
 from uncertain.utils import assert_no_grad
 
 
-def regression_loss(observed_ratings, predicted_ratings):
+def funk_svd_loss(predicted_ratings, observed_ratings=None, predicted_negative=None):
     """
-    Regression loss.
+    Funk SVD loss - If explicit, uses regression
+    loss, otherwise uses logistic loss.
 
     Parameters
     ----------
-    observed_ratings: tensor
-        Tensor containing observed ratings.
     predicted_ratings: tensor
         Tensor containing rating predictions.
+    observed_ratings: tensor
+        If explicit feedback: Tensor containing observed ratings.
+    predicted_negative: tensor
+        If implicit feedback: Tensor containing rating
+        predictions for the sampled negative instances.
 
     Returns
     -------
@@ -19,36 +23,51 @@ def regression_loss(observed_ratings, predicted_ratings):
         The mean value of the loss function.
     """
 
-    assert_no_grad(observed_ratings)
+    if observed_ratings is not None:
+        assert_no_grad(observed_ratings)
+        return ((observed_ratings - predicted_ratings) ** 2).mean()
+    else:
+        positive = (1.0 - torch.sigmoid(predicted_ratings)).mean()
+        negative = torch.sigmoid(predicted_negative).mean() if predicted_negative is not None else 0
+        return (positive + negative) / 2
 
-    return ((observed_ratings - predicted_ratings) ** 2).mean()
 
-
-def gaussian_loss(observed_ratings, predicted_ratings):
+def cpmf_loss(predicted_ratings, observed_ratings=None, predicted_negative=None):
     """
-    Gaussian loss.
+    Gaussian loss for explicit and implicit feedback.
 
     Parameters
     ----------
+    predicted_ratings: tensor
+        Tensor containing rating predictions.
     observed_ratings: tensor
-        Tensor (n_obs) containing the observed ratings.
-    predicted_ratings: tuple
-        A tuple containing 2 tensors: the estimated averages (n_obs) and variances (n_obs).
+        If explicit feedback: Tensor containing observed ratings.
+    predicted_negative: tensor
+        If implicit feedback: Tensor containing rating
+        predictions for the sampled negative instances.
 
-        Returns
+    Returns
     -------
-    loss: float
+    loss, float
         The mean value of the loss function.
     """
 
-    assert_no_grad(observed_ratings)
+    if observed_ratings is not None:
+        assert_no_grad(observed_ratings)
+        mean, variance = predicted_ratings
+        return (((observed_ratings - mean) ** 2) / variance).mean() + torch.log(variance).mean()
+    else:
+        mean, variance = predicted_ratings
+        positive = (((1.0 - mean) ** 2) / variance).mean() + torch.log(variance).mean()
+        if predicted_negative is not None:
+            mean, variance = predicted_negative
+            negative = ((mean ** 2) / variance).mean() + torch.log(variance).mean()
+        else:
+            negative = 0
+        return (positive + negative) / 2
 
-    mean, variance = predicted_ratings
 
-    return (((observed_ratings - mean) ** 2) / variance).mean() + torch.log(variance).mean()
-
-
-def max_prob_loss(observed_ratings, predicted_ratings):
+def max_prob_loss(predicted_ratings, observed_ratings):
     """
     Maximum probability loss for ordinal data.
 
@@ -69,33 +88,3 @@ def max_prob_loss(observed_ratings, predicted_ratings):
 
     return -predicted_ratings[range(len(-predicted_ratings)), observed_ratings].mean()
 
-
-def pointwise_loss(positive_predictions, negative_predictions, mask=None):
-    """
-    Logistic loss function.
-    Parameters
-    ----------
-    positive_predictions: tensor
-        Tensor containing predictions for known positive items.
-    negative_predictions: tensor
-        Tensor containing predictions for sampled negative items.
-    mask: tensor, optional
-        A binary tensor used to zero the loss from some entries
-        of the loss tensor.
-    Returns
-    -------
-    loss, float
-        The mean value of the loss function.
-    """
-
-    positives_loss = (1.0 - torch.sigmoid(positive_predictions))
-    negatives_loss = torch.sigmoid(negative_predictions)
-
-    loss = (positives_loss + negatives_loss)
-
-    if mask is not None:
-        mask = mask.float()
-        loss = loss * mask
-        return loss.sum() / mask.sum()
-
-    return loss.mean()
