@@ -63,50 +63,6 @@ def sample_items(num_items, shape, random_state=None):
     return items
 
 
-def evaluate(model, test, train):
-
-    out = {}
-    loader = minibatch(test, batch_size=int(1e5))
-    est = []
-    if model.is_uncertain:
-        unc = []
-        for interactions, _ in loader:
-            predictions = model.predict(interactions[:, 0], interactions[:, 1])
-            est.append(predictions[0])
-            unc.append(predictions[1])
-        unc = torch.hstack(unc)
-    else:
-        for interactions, _ in loader:
-            est.append(model.predict(interactions[:, 0], interactions[:, 1]))
-    est = torch.hstack(est)
-    
-    p, r, a, s = recommendation_score(model, test, train, max_k=10)
-    
-    out['RMSE'] = rmse_score(est, test.ratings)
-    out['Precision'] = p.mean(axis=0)
-    out['Recall'] = r.mean(axis=0)
-    
-    if model.is_uncertain:
-        error = torch.abs(test.ratings - est)
-        idx = torch.randperm(len(unc))[:int(1e5)]
-        quantiles = torch.quantile(unc[idx], torch.linspace(0, 1, 21, device=unc.device, dtype=unc.dtype))
-        out['Quantile RMSE'] = torch.zeros(20)
-        for idx in range(20):
-            ind = torch.bitwise_and(quantiles[idx] <= unc, unc < quantiles[idx + 1])
-            out['Quantile RMSE'][idx] = torch.sqrt(torch.square(error[ind]).mean())
-        quantiles = torch.quantile(a, torch.linspace(0, 1, 21, device=a.device, dtype=a.dtype))
-        out['Quantile MAP'] = torch.zeros(20)
-        for idx in range(20):
-            ind = torch.bitwise_and(quantiles[idx] <= a, a < quantiles[idx + 1])
-            out['Quantile MAP'][idx] = p[ind, -1].mean()
-        out['RRI'] = s.nansum(0) / (~s.isnan()).float().sum(0)
-        out['Correlation'] = correlation(error, unc)
-        out['RPI'] = rpi_score(error, unc)
-        out['Classification'] = classification(error, unc)
-    
-    return out
-
-
 def evaluate_zhu(model, test, relevance_threshold=None, max_k=20):
 
     out = {}

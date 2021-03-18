@@ -31,9 +31,9 @@ class Ensemble(Recommender):
             self.models[-1].initialize(train)
             self.models[-1].fit(train, validation)
 
-    def predict(self, interactions=None, user_ids=None):
+    def predict(self, interactions=None, user_id=None):
 
-        user_ids, item_ids = self._predict_process_ids(interactions, user_ids)
+        user_ids, item_ids = self._predict_process_ids(interactions, user_id)
 
         predictions = torch.empty((len(user_ids), len(self.models)), device=user_ids.device)
         for idx, model in enumerate(self.models):
@@ -72,9 +72,9 @@ class Resample(Recommender):
             self.models[i].initialize(train_)
             self.models[i].fit(train_, validation)
 
-    def predict(self, interactions=None, user_ids=None):
+    def predict(self, interactions=None, user_id=None):
 
-        user_ids, item_ids = self._predict_process_ids(interactions, user_ids)
+        user_ids, item_ids = self._predict_process_ids(interactions, user_id)
 
         predictions = torch.empty((len(user_ids), len(self.models)), device=user_ids.device)
         for idx, model in enumerate(self.models):

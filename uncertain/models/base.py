@@ -1,7 +1,6 @@
 import torch
 import numpy as np
 from uncertain.utils import gpu, minibatch
-from uncertain.metrics import rmse_score, recommendation_score, correlation, rpi_score, classification, determination
 
 
 class Recommender(object):
@@ -12,8 +11,9 @@ class Recommender(object):
         self.num_items = num_items
         self.num_ratings = num_ratings
         self._use_cuda = use_cuda
+        self.remove_uncertain = None
 
-    def _predict_process_ids(self, interactions=None, user_ids=None):
+    def _predict_process_ids(self, interactions=None, user_id=None):
 
         if interactions is not None:
             if torch.is_tensor(interactions):
@@ -22,22 +22,14 @@ class Recommender(object):
                 return interactions.users(), interactions.items()
 
         else:
-            item_ids = torch.arange(self.num_items)
+            item_ids = gpu(torch.arange(self.num_items), self._use_cuda)
+            user_ids = gpu(torch.full_like(item_ids, user_id))
 
-        if np.isscalar(user_ids):
-            user_ids = torch.tensor(user_ids)
+        return user_ids, item_ids
 
-        if item_ids.size() != user_ids.size():
-            user_ids = user_ids.expand(item_ids.size())
+    def recommend(self, user_id, train=None, top=10):
 
-        user_var = gpu(user_ids, self._use_cuda)
-        item_var = gpu(item_ids, self._use_cuda)
-
-        return user_var.squeeze(), item_var.squeeze()
-
-    def recommend(self, user_id, train=None, top=10, remove_uncertain=0):
-
-        predictions = self.predict(user_id)
+        predictions = self.predict(user_id=user_id)
 
         if not self.is_uncertain:
             predictions = predictions
@@ -47,20 +39,21 @@ class Recommender(object):
             predictions = predictions[0]
 
         if train is not None:
-            rated = train.interactions[:, 1][train.interactions[:, 0] == user_id]
-            predictions[rated] = float('inf')
-
-        ranking = predictions.argsort(desc=True)
+            rated = train.items()[train.users() == user_id]
+            predictions[rated] = -float('inf')
+            ranking = predictions.argsort(descending=True)[:-len(rated)]
+        else:
+            ranking = predictions.argsort(descending=True)
 
         if self.is_uncertain:
-            uncertainties = uncertainties[ranking][:top]
+            uncertainties = uncertainties[ranking]
 
-            if remove_uncertain > 0 & remove_uncertain < 1:
-                threshold = uncertainties.quantile(1 - remove_uncertain)
+            if self.remove_uncertain is not None:
+
+                threshold = uncertainties.quantile(1 - self.remove_uncertain)
                 idx = uncertainties < threshold
-                ranking, uncertainties = ranking[uncertainties < idx], uncertainties[uncertainties < idx]
+                ranking, uncertainties = ranking[idx], uncertainties[idx]
 
-            elif remove_uncertain != 0:
-                raise ValueError('remove_uncertainty should be within [0, 1)')
+            return ranking[:top], uncertainties[:top]
 
-        return predictions[:top], uncertainties[:top]
+        return ranking[:top], None

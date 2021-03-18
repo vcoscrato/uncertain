@@ -112,28 +112,25 @@ def recommendation_score(model, test, train=None, relevance_threshold=4, max_k=1
 
     precision = []
     recall = []
-    average_uncertainty = []
     rri = []
     precision_denom = torch.arange(1, max_k+1, device=test.interactions.device)
 
     for user_id in range(test.num_users):
 
         if relevance_threshold is not None:
-            targets = test.interactions[:, 1][torch.logical_and(test.interactions[:, 0] == user_id,
-                                                                test.ratings >= relevance_threshold)]
+            targets = test.items()[torch.logical_and(test.users() == user_id,
+                                   test.ratings >= relevance_threshold)]
         else:
-            targets = test.interactions[:, 1][test.interactions[:, 0] == user_id]
+            targets = test.items()[test.users() == user_id]
 
         if not len(targets):
             continue
 
         predictions, uncertainties = model.recommend(user_id, train)
-        if model.is_uncertain:
-            average_uncertainty.append(uncertainties.mean())
-
         hits = torch.zeros_like(predictions, dtype=torch.bool)
-        for elem in targets:
-            hits = hits | (predictions == elem)
+        for r in range(max_k):
+            if predictions[r] in targets:
+                hits[r] = 1
         num_hit = hits.cumsum(0)
 
         precision.append(num_hit / precision_denom)
@@ -145,24 +142,24 @@ def recommendation_score(model, test, train=None, relevance_threshold=4, max_k=1
                 rri_[i-2] = (unc.mean() - unc[hits[:i]]).mean() / unc.std()
             rri.append(rri_)
 
-    precision = torch.vstack(precision)
-    recall = torch.vstack(recall)
+    precision = torch.vstack(precision).mean(axis=0)
+    recall = torch.vstack(recall).mean(axis=0)
     if len(rri) > 0:
-        average_uncertainty = torch.tensor(average_uncertainty, device=precision.device)
         rri = torch.vstack(rri)
+        rri = rri.nansum(0) / (~rri.isnan()).float().sum(0)
 
-    return precision, recall, average_uncertainty, rri
+    return precision, recall, rri
 
 
 def pairwise(model, test):
 
-    rated_preds = model.predict(test.interactions[:, 0], test.interactions[:, 1])
+    rated_preds = model.predict(test)
     rated_lim_inf = rated_preds[0] - 1.96 * rated_preds[1].sqrt()
     counter = 0
 
     for u in tqdm(range(test.num_users)):
 
-        idx_u = test.interactions[:, 0] == u
+        idx_u = test.users() == u
         if idx_u.sum() == 0:
             pass
         rated = test.interactions[idx_u, 1]
@@ -176,3 +173,20 @@ def pairwise(model, test):
             counter += (u_lim_inf[idx] < negative_lim_sup).sum()
 
     return counter / (len(test)*5)
+
+
+def diversity(model, test, train, top=10):
+
+    avg_div = 0
+    train_csr = train.tocsr()
+    for i in range(1, test.num_users):
+        rec_list = model.recommend(i, train, top)[0].cpu().detach().numpy()
+        items_profile = train_csr[:, rec_list]
+
+        dist = np.zeros((top, top))
+        for k in range(items_profile.shape[1]):
+            for kk in range(k+1, items_profile.shape[1]):
+                dist[k, kk] = np.abs(items_profile[:, k] - items_profile[:, kk]).sum()
+        avg_div += dist.sum()
+
+    return avg_div / (test.num_users * top * (top-1))

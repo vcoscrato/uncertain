@@ -61,7 +61,6 @@ class LatentFactorRecommender(Recommender):
                               len(interactions))
 
         self._net = self._construct_net()
-        self._load()
 
         self._optimizer = torch.optim.SGD(
             self._net.parameters(),
@@ -69,7 +68,7 @@ class LatentFactorRecommender(Recommender):
             weight_decay=self._l2
             )
 
-    def _load(self):
+    def load(self):
         if os.path.exists(self._path):
             self._net.load_state_dict(torch.load(self._path))
             if self._verbose:
@@ -187,7 +186,7 @@ class LatentFactorRecommender(Recommender):
         if self._path == os.getcwd()+'tmp':
             os.remove(self._path)
 
-    def _predict(self, interactions=None, user_ids=None):
+    def _predict(self, interactions=None, user_id=None):
         """
         Make predictions: given a user id, compute the net forward pass.
 
@@ -211,7 +210,7 @@ class LatentFactorRecommender(Recommender):
             Predicted scores for all items in item_ids.
         """
 
-        user_ids, item_ids = self._predict_process_ids(interactions, user_ids)
+        user_ids, item_ids = self._predict_process_ids(interactions, user_id)
         with torch.no_grad():
             out = self._net(user_ids, item_ids)
 
@@ -265,9 +264,9 @@ class Linear(LatentFactorRecommender):
         return gpu(BiasNet(self.num_users, self.num_items, self._sparse),
                    self._use_cuda)
 
-    def predict(self, interactions=None, user_ids=None):
+    def predict(self, interactions=None, user_id=None):
 
-        return self._predict(interactions, user_ids)
+        return self._predict(interactions, user_id)
 
 
 class FunkSVD(LatentFactorRecommender):
@@ -312,16 +311,16 @@ class FunkSVD(LatentFactorRecommender):
 
     @property
     def is_uncertain(self):
-        return True
+        return False
 
     def _construct_net(self):
         
         return gpu(FunkSVDNet(self.num_users, self.num_items, self._embedding_dim, self._sparse),
                    self._use_cuda)
 
-    def predict(self, interactions=None, user_ids=None):
+    def predict(self, interactions=None, user_id=None):
 
-        return self._predict(interactions, user_ids)
+        return self._predict(interactions, user_id)
 
 
 class CPMF(LatentFactorRecommender):
@@ -352,9 +351,9 @@ class CPMF(LatentFactorRecommender):
         return gpu(CPMFNet(self.num_users, self.num_items, self._embedding_dim, self._sparse),
                    self._use_cuda)
 
-    def predict(self, interactions=None, user_ids=None):
+    def predict(self, interactions=None, user_id=None):
 
-        out = self._predict(interactions, user_ids)
+        out = self._predict(interactions, user_id)
         return out[0], out[1]
 
 
@@ -389,9 +388,9 @@ class OrdRec(LatentFactorRecommender):
                              self._embedding_dim, self._sparse),
                    self._use_cuda)
 
-    def predict(self, interactions=None, user_ids=None, return_distribution=False):
+    def predict(self, interactions=None, user_id=None, return_distribution=False):
 
-        distribution = self._predict(interactions, user_ids)
+        distribution = self._predict(interactions, user_id)
 
         if return_distribution:
             return distribution

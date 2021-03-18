@@ -8,7 +8,7 @@ from uncertain.models import FunkSVD
 from uncertain.utils import minibatch
 
 
-class LinearUncertainty(object):
+class LinearUncertainty(Recommender):
     """
     Basic uncertainty estimator that uses the
     sum of static user and/or item coefficients.
@@ -28,8 +28,11 @@ class LinearUncertainty(object):
 
         self.user = user_uncertainty
         self.item = item_uncertainty
+        super().__init__(len(user_uncertainty), len(item_uncertainty), use_cuda=self.user.is_cuda)
 
-    def predict(self, user_ids, item_ids):
+    def predict(self, interactions, user_id):
+
+        user_ids, item_ids = self._predict_process_ids(interactions, user_id)
 
         user_uncertainty = self.user[user_ids] if self.user is not None else 0
         item_uncertainty = self.item[item_ids] if self.item is not None else 0
@@ -102,9 +105,9 @@ class PlugIn(Recommender):
     def is_uncertain(self):
         return True
 
-    def predict(self, interactions=None, user_ids=None):
+    def predict(self, interactions=None, user_id=None):
 
-        ratings = self.ratings.predict(interactions, user_ids)
-        uncertainty = self.uncertainty.predict(interactions, user_ids)
+        ratings = self.ratings.predict(interactions, user_id)
+        uncertainty = self.uncertainty.predict(interactions, user_id)
 
         return ratings, uncertainty
