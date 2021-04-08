@@ -134,10 +134,11 @@ class Interactions(object):
 
     def get_rated_items(self, user_id, threshold=None):
 
+        idx = self.interactions[:, 0] == user_id
         if threshold is None:
-            return self.interactions[self.interactions[:, 0] == user_id, 1]
+            return self.interactions[idx, 1]
         else:
-            return self.interactions[self.interactions[:, 0] == user_id and self.ratings >= threshold, 1]
+            return self.interactions[torch.logical_and(idx, self.ratings >= threshold), 1]
 
     def get_negative_items(self, user_id):
 
