@@ -132,10 +132,12 @@ class Interactions(object):
 
         return self.tocoo().tocsr()
 
-    def get_rated_items(self, user_id):
+    def get_rated_items(self, user_id, threshold=None):
 
-        positive_items = self.interactions[self.interactions[:, 0] == user_id, 1]
-        return positive_items
+        if threshold is None:
+            return self.interactions[self.interactions[:, 0] == user_id, 1]
+        else:
+            return self.interactions[self.interactions[:, 0] == user_id and self.ratings >= threshold, 1]
 
     def get_negative_items(self, user_id):
 
