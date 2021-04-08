@@ -108,9 +108,9 @@ class BaseRecommender(object):
 
         Parameters
         ----------
-        train: :class:`uncertain.interactions.Interactions`
+        train: :class:`uncertain.data_structures.Interactions`
             The input dataset. Must have ratings.
-        validation: :class:`uncertain.interactions.Interactions`
+        validation: :class:`uncertain.data_structures.Interactions`
             Test dataset for iterative evaluation.
         """
 

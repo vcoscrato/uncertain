@@ -4,7 +4,7 @@ import torch
 import numpy as np
 from uncertain.datasets import amazon, goodbooks, movielens
 from uncertain.cross_validation import random_train_test_split as split
-from uncertain.interactions import ExplicitInteractions
+from uncertain.data_structures import ExplicitInteractions
 from uncertain.metrics import rmse_score, recommendation_score, correlation, rpi_score, classification
 from uncertain.utils import minibatch
 

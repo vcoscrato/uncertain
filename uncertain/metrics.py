@@ -13,6 +13,37 @@ def rmse_score(predictions, ratings):
     return torch.sqrt(((ratings - predictions) ** 2).mean())
 
 
+def hit_rate(recommendations, targets):
+
+    hits = 0
+    for item in recommendations.items:
+        if item in targets:
+            hits += 1
+
+    return hits / len(recommendations.items)
+
+
+def precision(recommendations, targets):
+
+    hits = torch.zeros_like(recommendations.items)
+    for idx, item in enumerate(recommendations.items):
+        if item in targets:
+            hits[idx] = 1
+
+    return hits.cumsum(0) / torch.arange(1, len(hits)+1, device=hits.device)
+
+
+def surprise(recommendations, model, rated_factor):
+
+    out = []
+    for item in recommendations.items:
+        with torch.no_grad():
+            item_factor = model._net.item_embeddings(item)
+        out.append(torch.cosine_similarity(item_factor, rated_factor, dim=-1).min().item())
+
+    return out
+
+
 def pearson_correlation(x, y):
     
     x_deviations = x - x.mean()

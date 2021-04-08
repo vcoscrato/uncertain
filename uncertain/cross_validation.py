@@ -4,7 +4,7 @@ Module with functionality for splitting and shuffling datasets.
 
 import torch
 import numpy as np
-from uncertain.interactions import Interactions
+from uncertain.data_structures import Interactions
 from copy import deepcopy as dc
 
 
@@ -17,7 +17,7 @@ def random_train_test_split(data,
     Parameters
     ----------
 
-    data: :class:`uncertain.interactions.Interactions`
+    data: :class:`uncertain.data_structures.Interactions`
         The interactions to shuffle.
     test_percentage: float, optional
         The fraction of interactions to place in the test set.

@@ -121,9 +121,9 @@ class LatentFactorRecommender(Recommender):
 
         Parameters
         ----------
-        train: :class:`uncertain.interactions.Interactions`
+        train: :class:`uncertain.data_structures.Interactions`
             The input dataset. Must have ratings.
-        validation: :class:`uncertain.interactions.Interactions`
+        validation: :class:`uncertain.data_structures.Interactions`
             Test dataset for iterative evaluation.
         """
 
@@ -186,36 +186,6 @@ class LatentFactorRecommender(Recommender):
         if self._path == os.getcwd()+'tmp':
             os.remove(self._path)
 
-    def _predict(self, interactions=None, user_id=None):
-        """
-        Make predictions: given a user id, compute the net forward pass.
-
-        Parameters
-        ----------
-
-        user_ids: int or array
-           If int, will predict the recommendation scores for this
-           user for all items in item_ids. If an array, will predict
-           scores for all (user, item) pairs defined by user_ids and
-           item_ids.
-        item_ids: array, optional
-            Array containing the item ids for which prediction scores
-            are desired. If not supplied, predictions for all items
-            will be computed.
-
-        Returns
-        -------
-
-        predictions: np.array
-            Predicted scores for all items in item_ids.
-        """
-
-        user_ids, item_ids = self._predict_process_ids(interactions, user_id)
-        with torch.no_grad():
-            out = self._net(user_ids, item_ids)
-
-        return out
-
 
 class Linear(LatentFactorRecommender):
     """
@@ -264,9 +234,34 @@ class Linear(LatentFactorRecommender):
         return gpu(BiasNet(self.num_users, self.num_items, self._sparse),
                    self._use_cuda)
 
-    def predict(self, interactions=None, user_id=None):
+    def predict(self, user_ids, item_ids):
+        """
+        Make predictions: given a user id, compute the net forward pass.
 
-        return self._predict(interactions, user_id)
+        Parameters
+        ----------
+
+        user_ids: int or array
+           If int, will predict the recommendation scores for this
+           user for all items in item_ids. If an array, will predict
+           scores for all (user, item) pairs defined by user_ids and
+           item_ids.
+        item_ids: array, optional
+            Array containing the item ids for which prediction scores
+            are desired. If not supplied, predictions for all items
+            will be computed.
+
+        Returns
+        -------
+
+        predictions: np.array
+            Predicted scores for all items in item_ids.
+        """
+
+        with torch.no_grad():
+            out = self._net(user_ids, item_ids)
+
+        return out
 
 
 class FunkSVD(LatentFactorRecommender):
@@ -318,9 +313,34 @@ class FunkSVD(LatentFactorRecommender):
         return gpu(FunkSVDNet(self.num_users, self.num_items, self._embedding_dim, self._sparse),
                    self._use_cuda)
 
-    def predict(self, interactions=None, user_id=None):
+    def predict(self, user_ids, item_ids):
+        """
+        Make predictions: given a user id, compute the net forward pass.
 
-        return self._predict(interactions, user_id)
+        Parameters
+        ----------
+
+        user_ids: int or array
+           If int, will predict the recommendation scores for this
+           user for all items in item_ids. If an array, will predict
+           scores for all (user, item) pairs defined by user_ids and
+           item_ids.
+        item_ids: array, optional
+            Array containing the item ids for which prediction scores
+            are desired. If not supplied, predictions for all items
+            will be computed.
+
+        Returns
+        -------
+
+        predictions: np.array
+            Predicted scores for all items in item_ids.
+        """
+
+        with torch.no_grad():
+            out = self._net(user_ids, item_ids)
+
+        return out
 
 
 class CPMF(LatentFactorRecommender):
@@ -351,9 +371,33 @@ class CPMF(LatentFactorRecommender):
         return gpu(CPMFNet(self.num_users, self.num_items, self._embedding_dim, self._sparse),
                    self._use_cuda)
 
-    def predict(self, interactions=None, user_id=None):
+    def predict(self, user_ids, item_ids):
+        """
+        Make predictions: given a user id, compute the net forward pass.
 
-        out = self._predict(interactions, user_id)
+        Parameters
+        ----------
+
+        user_ids: int or array
+           If int, will predict the recommendation scores for this
+           user for all items in item_ids. If an array, will predict
+           scores for all (user, item) pairs defined by user_ids and
+           item_ids.
+        item_ids: array, optional
+            Array containing the item ids for which prediction scores
+            are desired. If not supplied, predictions for all items
+            will be computed.
+
+        Returns
+        -------
+
+        predictions: np.array
+            Predicted scores for all items in item_ids.
+        """
+
+        with torch.no_grad():
+            out = self._net(user_ids, item_ids)
+
         return out[0], out[1]
 
 
@@ -388,19 +432,34 @@ class OrdRec(LatentFactorRecommender):
                              self._embedding_dim, self._sparse),
                    self._use_cuda)
 
-    def predict(self, interactions=None, user_id=None, return_distribution=False):
+    def predict(self, user_ids, item_ids):
+        """
+        Make predictions: given a user id, compute the net forward pass.
 
-        distribution = self._predict(interactions, user_id)
+        Parameters
+        ----------
 
-        if return_distribution:
-            return distribution
+        user_ids: int or array
+           If int, will predict the recommendation scores for this
+           user for all items in item_ids. If an array, will predict
+           scores for all (user, item) pairs defined by user_ids and
+           item_ids.
+        item_ids: array, optional
+            Array containing the item ids for which prediction scores
+            are desired. If not supplied, predictions for all items
+            will be computed.
 
-        # Most probable rating
-        # mean = self._rating_labels[(out.argmax(1))]
-        # confidence = out.max(1)[0]
+        Returns
+        -------
 
-        # Average ranking
-        mean = (distribution * self._rating_labels).sum(1)
-        var = ((distribution * self._rating_labels ** 2).sum(1) - mean ** 2).abs()
+        predictions: np.array
+            Predicted scores for all items in item_ids.
+        """
+
+        with torch.no_grad():
+            out = self._net(user_ids, item_ids)
+
+        mean = (out * self._rating_labels).sum(1)
+        var = ((out * self._rating_labels ** 2).sum(1) - mean ** 2).abs()
 
         return mean, var

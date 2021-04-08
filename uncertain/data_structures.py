@@ -132,11 +132,16 @@ class Interactions(object):
 
         return self.tocoo().tocsr()
 
-    def get_negative_items(self, user_id):
+    def get_rated_items(self, user_id):
 
         positive_items = self.interactions[self.interactions[:, 0] == user_id, 1]
-        negative_items = torch.tensor([i for i in range(self.num_items) if i not in positive_items],
-                                      device=positive_items.device)
+        return positive_items
+
+    def get_negative_items(self, user_id):
+
+        rated_items = self.get_rated_items(user_id)
+        negative_items = torch.tensor([i for i in range(self.num_items) if i not in rated_items],
+                                      device=rated_items.device)
         return negative_items
 
     def shuffle(self, seed=None):
@@ -180,3 +185,37 @@ class Interactions(object):
         variances[torch.isnan(variances)] = 0
 
         return variances
+
+
+class Recommendations(object):
+    """
+    This object should be used for an easier and better
+    visualization and evaluation of a recommendation list.
+
+    Parameters
+    ----------
+    ID: int
+        user identifier
+    items: list
+        A list containing the recommended item ids.
+    uncertainties: list
+        The estimated uncertainty for each of the
+        recommended items.
+    """
+
+    def __init__(self, ID, items, uncertainties=None):
+
+        self.ID = ID
+        self.items = items
+        self.uncertainties = uncertainties
+
+    def __repr__(self):
+
+        s = 'Recommendation list for user {}: \n'.format(self.ID)
+        for i in range(len(self.items)):
+            s += 'Item: {}'.format(self.items[i])
+            if self.uncertainties is not None:
+                s += '; Uncertainty: {unc:1.2f}'.format(unc=self.uncertainties[i])
+            s += '.\n'
+
+        return s

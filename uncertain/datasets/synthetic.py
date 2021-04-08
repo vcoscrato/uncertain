@@ -6,7 +6,7 @@ experimentation.
 
 import numpy as np
 
-from uncertain.interactions import Interactions
+from uncertain.data_structures import Interactions
 
 
 def _build_transition_matrix(num_items,
@@ -104,7 +104,7 @@ def generate_sequential(num_users=100,
     Returns
     -------
 
-    Interactions: :class:`uncertain.interactions.Interactions`
+    Interactions: :class:`uncertain.data_structures.Interactions`
         instance of the interactions class
     """
 
