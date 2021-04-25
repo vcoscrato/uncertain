@@ -1,5 +1,13 @@
 import torch
-from uncertain.utils import assert_no_grad
+
+
+def assert_no_grad(variable):
+
+    if variable.requires_grad:
+        raise ValueError(
+            "nn criterion don't compute the gradient w.r.t. targets - please "
+            "mark these variables as volatile or not requiring gradients"
+        )
 
 
 def funk_svd_loss(predicted_ratings, observed_ratings=None, predicted_negative=None):
@@ -85,6 +93,5 @@ def max_prob_loss(predicted_ratings, observed_ratings):
     """
 
     assert_no_grad(observed_ratings)
-
-    return -predicted_ratings[range(len(-predicted_ratings)), observed_ratings].mean()
+    return -predicted_ratings[range(len(-predicted_ratings)), observed_ratings].log().mean()
 

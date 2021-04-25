@@ -2,7 +2,6 @@ import os
 import torch
 import numpy as np
 from uncertain.models.base import Recommender
-from uncertain.utils import gpu, minibatch, sample_items
 from uncertain.representations import BiasNet, FunkSVDNet, CPMFNet, OrdRecNet
 from uncertain.losses import funk_svd_loss, cpmf_loss, max_prob_loss
 
@@ -12,14 +11,17 @@ class LatentFactorRecommender(Recommender):
     def __init__(self,
                  batch_size,
                  learning_rate,
-                 use_cuda,
+                 tolerance,
                  path,
-                 verbose):
+                 verbose,
+                 max_epochs=float('inf')):
 
         self._batch_size = batch_size
         self._lr = learning_rate
+        self._tolerance = tolerance
         self._path = path
         self._verbose = verbose
+        self.max_epochs = max_epochs
 
         self.type = None
         self._net = None
@@ -28,7 +30,7 @@ class LatentFactorRecommender(Recommender):
         self.test_loss = None
         self.min_val_loss = None
 
-        super().__init__(use_cuda=use_cuda)
+        super().__init__()
 
     def __repr__(self):
 
@@ -49,15 +51,16 @@ class LatentFactorRecommender(Recommender):
     def initialize(self, interactions):
 
         self.type = interactions.type
+        self.device = interactions.device
 
         self.train_loss = []
         self.test_loss = []
         self.min_val_loss = float('inf')
 
-        (self.num_users,
-         self.num_items,
-         self.num_ratings) = (interactions.num_users,
-                              interactions.num_items,
+        (self.user_labels,
+         self.item_labels,
+         self.num_ratings) = (interactions.user_labels,
+                              interactions.item_labels,
                               len(interactions))
 
         self._net = self._construct_net()
@@ -86,11 +89,7 @@ class LatentFactorRecommender(Recommender):
 
     def _get_negative_prediction(self, user_ids):
 
-        negative_items = sample_items(
-            self.num_items,
-            len(user_ids))
-        negative_var = gpu(torch.from_numpy(negative_items), self._use_cuda)
-
+        negative_items = self.sample_items(len(item_ids))
         negative_prediction = self._net(user_ids, negative_var)
 
         return negative_prediction
@@ -127,21 +126,19 @@ class LatentFactorRecommender(Recommender):
             Test dataset for iterative evaluation.
         """
 
-        self.type = train.type
-
         if not self._initialized:
             self.initialize(train)
 
         epoch = 1
-        tol = False
-        while True:
+        tol = 0
+        while epoch < self.max_epochs:
 
             train.shuffle()
-            train_loader = minibatch(train, batch_size=self._batch_size)
+            train_loader = train.minibatch(batch_size=self._batch_size)
             self._net.train()
             self.train_loss.append(self._one_epoch(train_loader))
 
-            validation_loader = minibatch(validation, batch_size=int(1e5))
+            validation_loader = validation.minibatch(batch_size=int(1e5))
             epoch_loss = 0
             with torch.no_grad():
 
@@ -161,22 +158,22 @@ class LatentFactorRecommender(Recommender):
             out = 'Epoch {} loss - Train: {}, Validation: {}'.format(epoch, self.train_loss[-1], epoch_loss)
 
             if epoch_loss < self.min_val_loss:
-                tol = False
+                tol = 0
                 self.min_val_loss = epoch_loss
                 out += ' - This is the lowest validation loss so far'
                 epoch += 1
                 torch.save(self._net.state_dict(), self._path)
 
             else:
+                tol += 1
                 self._net.load_state_dict(torch.load(self._path))
-                if tol:
+                if tol > self._tolerance:
                     out += ' - Validation loss did not improve. Ending training.'
                     if self._verbose:
                         print(out)
                     break
                 else:
                     out += ' - Validation loss did not improve. Reducing learning rate.'
-                    tol = True
                     for g in self._optimizer.param_groups:
                         g['lr'] /= 2
 
@@ -186,10 +183,22 @@ class LatentFactorRecommender(Recommender):
         if self._path == os.getcwd()+'tmp':
             os.remove(self._path)
 
+    def get_item_similarity(self, item_id, candidate_ids=None):
+
+        if hasattr(self._net, 'item_embeddings'):
+            with torch.no_grad():
+                item_var = self._net.item_embeddings(torch.tensor(item_id, device=self.device))
+                if candidate_ids is None:
+                    candidate_ids = torch.arange(self.num_items, device=self.device)
+                candidates_var = self._net.item_embeddings(candidate_ids)
+                return torch.cosine_similarity(item_var, candidates_var, dim=-1)
+        else:
+            raise Exception('Model has no item_embeddings.')
+
 
 class Linear(LatentFactorRecommender):
     """
-    An Explicit feedback matrix factorization model.
+    An Explicit feedback bias model.
 
     Parameters
     ----------
@@ -204,8 +213,6 @@ class Linear(LatentFactorRecommender):
         L2 loss penalty.
     learning_rate: float
         Initial learning rate.
-    use_cuda: boolean
-        Run the model on a GPU.
     sparse: boolean
         Use sparse gradients for embedding layers.
     """
@@ -214,7 +221,7 @@ class Linear(LatentFactorRecommender):
                  batch_size,
                  l2,
                  learning_rate,
-                 use_cuda=False,
+                 tolerance,
                  path=os.getcwd() + 'tmp',
                  sparse=False,
                  verbose=True):
@@ -223,7 +230,7 @@ class Linear(LatentFactorRecommender):
         self._sparse = sparse
         self._loss_func = funk_svd_loss
 
-        super().__init__(batch_size, learning_rate, use_cuda, path, verbose)
+        super().__init__(batch_size, learning_rate, tolerance, path, verbose, max_epochs=100)
 
     @property
     def is_uncertain(self):
@@ -231,8 +238,7 @@ class Linear(LatentFactorRecommender):
 
     def _construct_net(self):
 
-        return gpu(BiasNet(self.num_users, self.num_items, self._sparse),
-                   self._use_cuda)
+        return BiasNet(self.num_users, self.num_items, self._sparse).to(self.device)
 
     def predict(self, user_ids, item_ids):
         """
@@ -281,8 +287,6 @@ class FunkSVD(LatentFactorRecommender):
         L2 loss penalty.
     learning_rate: float
         Initial learning rate.
-    use_cuda: boolean
-        Run the model on a GPU.
     sparse: boolean
         Use sparse gradients for embedding layers.
     """
@@ -292,7 +296,7 @@ class FunkSVD(LatentFactorRecommender):
                  batch_size,
                  l2,
                  learning_rate,
-                 use_cuda=False,
+                 tolerance,
                  path=os.getcwd()+'tmp',
                  sparse=False,
                  verbose=True):
@@ -302,7 +306,7 @@ class FunkSVD(LatentFactorRecommender):
         self._sparse = sparse
         self._loss_func = funk_svd_loss
 
-        super().__init__(batch_size, learning_rate, use_cuda, path, verbose)
+        super().__init__(batch_size, learning_rate, tolerance, path, verbose)
 
     @property
     def is_uncertain(self):
@@ -310,8 +314,7 @@ class FunkSVD(LatentFactorRecommender):
 
     def _construct_net(self):
         
-        return gpu(FunkSVDNet(self.num_users, self.num_items, self._embedding_dim, self._sparse),
-                   self._use_cuda)
+        return FunkSVDNet(self.num_users, self.num_items, self._embedding_dim, self._sparse).to(self.device)
 
     def predict(self, user_ids, item_ids):
         """
@@ -350,7 +353,7 @@ class CPMF(LatentFactorRecommender):
                  batch_size,
                  l2,
                  learning_rate,
-                 use_cuda=False,
+                 tolerance,
                  path=os.getcwd()+'tmp',
                  sparse=False,
                  verbose=True):
@@ -360,7 +363,7 @@ class CPMF(LatentFactorRecommender):
         self._sparse = sparse
         self._loss_func = cpmf_loss
 
-        super().__init__(batch_size, learning_rate, use_cuda, path, verbose)
+        super().__init__(batch_size, learning_rate, tolerance, path, verbose)
 
     @property
     def is_uncertain(self):
@@ -368,8 +371,7 @@ class CPMF(LatentFactorRecommender):
 
     def _construct_net(self):
 
-        return gpu(CPMFNet(self.num_users, self.num_items, self._embedding_dim, self._sparse),
-                   self._use_cuda)
+        return CPMFNet(self.num_users, self.num_items, self._embedding_dim, self._sparse).to(self.device)
 
     def predict(self, user_ids, item_ids):
         """
@@ -409,7 +411,7 @@ class OrdRec(LatentFactorRecommender):
                  batch_size,
                  l2,
                  learning_rate,
-                 use_cuda=False,
+                 tolerance,
                  path=os.getcwd()+'tmp',
                  sparse=False,
                  verbose=True):
@@ -420,7 +422,7 @@ class OrdRec(LatentFactorRecommender):
         self._sparse = sparse
         self._loss_func = max_prob_loss
 
-        super().__init__(batch_size, learning_rate, use_cuda, path, verbose)
+        super().__init__(batch_size, learning_rate, tolerance, path, verbose)
 
     @property
     def is_uncertain(self):
@@ -428,9 +430,8 @@ class OrdRec(LatentFactorRecommender):
 
     def _construct_net(self):
 
-        return gpu(OrdRecNet(self.num_users, self.num_items, len(self._rating_labels),
-                             self._embedding_dim, self._sparse),
-                   self._use_cuda)
+        return OrdRecNet(self.num_users, self.num_items, len(self._rating_labels),
+                         self._embedding_dim, self._sparse).to(self.device)
 
     def predict(self, user_ids, item_ids):
         """

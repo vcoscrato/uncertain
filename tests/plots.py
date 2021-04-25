@@ -98,3 +98,43 @@ ax.set_ylabel('URI@K', Fontsize=20)
 ax.legend(ncol=2)
 f.tight_layout()
 f.savefig(path+'Plots/URI.pdf')
+
+#######################################################################################################################
+
+
+def recom_split_plot(baseline, certain, uncertain, metric_name, save_path=None):
+
+    bar_width = 0.4
+    cuts = ['Permissive cut', 'Median cut', 'Restrictive cut']
+    certain_position = np.arange(0, 3)
+    uncertain_position = certain_position + bar_width
+
+    f, ax = plt.subplots(figsize=(6, 5))
+    ax.set_ylabel(metric_name, fontsize=20)
+    ax.set_xticks(certain_position + bar_width / 2)
+    ax.set_xticklabels(cuts, fontsize=12)
+    for pos in uncertain_position[:-1] + 3/4 * bar_width:
+        ax.axvline(pos, linestyle='dashed', color='k', alpha=0.5)
+
+    ax.axhline(baseline, label='Baseline '+metric_name)
+    ax.bar(certain_position, certain, label='Certain', width=bar_width, color='g', edgecolor='k', hatch='//')
+    ax.bar(uncertain_position, uncertain, label='Uncertain', width=bar_width, color='r', edgecolor='k', hatch='\\\\')
+    ax.legend()
+
+    for i in range(3):
+        ax.text(x=certain_position[i], y=certain[i]+baseline/100, s=certain[i], ha='center')
+        ax.text(x=uncertain_position[i], y=uncertain[i]+baseline/100, s=uncertain[i], ha='center')
+
+    f.tight_layout()
+    f.show()
+
+
+baseline = 0.067
+certain = np.array((0.079, 0.084, 0.097))
+uncertain = np.array((0.002, 0.011, 0.032))
+recom_split_plot(baseline, certain, uncertain, 'Hit rate')
+
+baseline = 0.383
+certain = np.array((0.344, 0.341, 0.337))
+uncertain = np.array((0.528, 0.495, 0.432))
+recom_split_plot(baseline, certain, uncertain, 'Surprise')

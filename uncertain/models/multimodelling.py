@@ -3,7 +3,6 @@ import torch
 import numpy as np
 from copy import deepcopy
 from tqdm import tqdm
-from uncertain.utils import gpu
 from uncertain.models.base import Recommender
 from uncertain.cross_validation import random_train_test_split
 
@@ -19,7 +18,7 @@ class Ensemble(Recommender):
         self.models[0]._verbose = False
         self.models[0]._path = os.getcwd() + 'tmp'
 
-        super().__init__(base_model.num_users, base_model.num_items, base_model.num_ratings, base_model._use_cuda)
+        super().__init__(base_model.user_labels, base_model.item_labels, base_model.device)
 
     @property
     def is_uncertain(self):
@@ -31,9 +30,7 @@ class Ensemble(Recommender):
             self.models[-1].initialize(train)
             self.models[-1].fit(train, validation)
 
-    def predict(self, interactions=None, user_id=None):
-
-        user_ids, item_ids = self._predict_process_ids(interactions, user_id)
+    def predict(self, user_ids, item_ids):
 
         predictions = torch.empty((len(user_ids), len(self.models)), device=user_ids.device)
         for idx, model in enumerate(self.models):
@@ -58,7 +55,7 @@ class Resample(Recommender):
         self.base_model._verbose = False
         self.base_model._path = os.getcwd()+'tmp'
 
-        super().__init__(base_model.num_users, base_model.num_items, base_model.num_ratings, base_model._use_cuda)
+        super().__init__(base_model.user_labels, base_model.item_labels, base_model.device)
 
     @property
     def is_uncertain(self):
@@ -72,9 +69,7 @@ class Resample(Recommender):
             self.models[i].initialize(train_)
             self.models[i].fit(train_, validation)
 
-    def predict(self, interactions=None, user_id=None):
-
-        user_ids, item_ids = self._predict_process_ids(interactions, user_id)
+    def predict(self, user_ids, item_ids):
 
         predictions = torch.empty((len(user_ids), len(self.models)), device=user_ids.device)
         for idx, model in enumerate(self.models):

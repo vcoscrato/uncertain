@@ -67,6 +67,6 @@ def get_movielens_dataset(variant='100K'):
 
     url = 'movielens_{}'.format(variant)
 
-    user, items, ratings, _ = _get_movielens(url)
+    user, items, ratings, timestamps = _get_movielens(url)
 
-    return Interactions((user, items), ratings)
+    return Interactions((user, items), ratings, timestamps)

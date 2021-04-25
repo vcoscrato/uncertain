@@ -8,9 +8,7 @@ from uncertain.data_structures import Interactions
 from copy import deepcopy as dc
 
 
-def random_train_test_split(data,
-                            test_percentage=0.2,
-                            random_state=None):
+def random_train_test_split(data, test_percentage=0.2, random_state=None):
     """
     Randomly split interactions between training and testing.
 
@@ -32,8 +30,8 @@ def random_train_test_split(data,
          A tuple of (train data, test data)
     """
 
-    n_users = data.num_users
-    n_items = data.num_items
+    user_labels = data.user_labels
+    item_labels = data.item_labels
     data.shuffle(random_state)
 
     cutoff = int((1.0 - test_percentage) * len(data))
@@ -44,71 +42,62 @@ def random_train_test_split(data,
     train_ratings = None if data.ratings is None else data.ratings[:cutoff]
     test_ratings = None if data.ratings is None else data.ratings[cutoff:]
 
-    train = Interactions(train_interactions, train_ratings, n_users, n_items)
-    test = Interactions(test_interactions, test_ratings, n_users, n_items)
+    train = Interactions(train_interactions, train_ratings, None, user_labels, item_labels)
+    test = Interactions(test_interactions, test_ratings, None, user_labels, item_labels)
 
     return train, test
 
 
-def user_based_split(interactions, n_validation, n_test):
+def user_based_split(data, test_percentage=0.2, seed=None):
     """
-    Currently not functioning
+    Split interactions between training and testing, guarantee
+    that each user have a 'test_percentage' fraction of ratings
+    in the test set. If timestamps are provided, the latest
+    ratings are placed in the test set.
 
-    Args:
-        interactions:
-        n_validation:
-        n_test:
+    Parameters
+    ----------
 
-    Returns:
+    data: :class:`uncertain.data_structures.Interactions`
+        The interactions to shuffle.
+    test_percentage: float, optional
+        The fraction of interactions to place in the test set.
+    seed: int
+        Seed to pass to RNG. Ignored if timestamps are provided.
+
+    Returns
+    -------
+
+    (train, test): (:class:`uncertain.interactions.Interactions`,
+                    :class:`uncertain.interactions.Interactions`)
+         A tuple of (train data, test data)
     """
 
-    train_user_ids = []
-    train_item_ids = []
-    train_ratings = []
+    train_idx = []
+    test_idx = []
 
-    if n_validation > 0:
-        validation_user_ids = []
-        validation_item_ids = []
-        validation_ratings = []
-    
-    test_user_ids = []
-    test_item_ids = []
-    test_ratings = []
+    if seed is not None:
+        torch.manual_seed(seed)
 
-    for u in range(1, interactions.num_users):
-        idx = interactions.user_ids == u
-        if idx.sum() <= n_validation + n_test:
-            continue
-        user_ids = interactions.user_ids[idx]
-        item_ids = interactions.item_ids[idx]
-        ratings = interactions.ratings[idx]
+    for u in range(data.num_users):
 
-        test_user_ids.append(user_ids[-n_test:])
-        test_item_ids.append(item_ids[-n_test:])
-        test_ratings.append(ratings[-n_test:])
+        idx = torch.where(data.users == u)[0]
 
-        if n_validation > 0:
-            validation_user_ids.append(user_ids[-(n_test + n_validation):-n_test])
-            validation_item_ids.append(item_ids[-(n_test+n_validation):-n_test])
-            validation_ratings.append(ratings[-(n_test + n_validation):-n_test])
+        if data.timestamps is not None:
+            idx = idx[data.timestamps[idx].argsort()]
+        else:
+            idx = idx[torch.randperm(len(idx), device=idx.device)]
 
-        train_user_ids.append(user_ids[:-(n_test + n_validation)])
-        train_item_ids.append(item_ids[:-(n_test+n_validation)])
-        train_ratings.append(ratings[:-(n_test+n_validation)])
+        cutoff = int((1.0 - test_percentage) * len(idx))
 
-    train = Interactions(torch.cat(train_user_ids).long(),
-                         torch.cat(train_item_ids).long(),
-                         torch.cat(train_ratings), num_items=interactions.num_items)
+        train_idx.append(idx[:cutoff])
+        test_idx.append(idx[cutoff:])
 
-    test = Interactions(torch.cat(test_user_ids).long(),
-                        torch.cat(test_item_ids).long(),
-                        torch.cat(test_ratings), num_items=interactions.num_items)
-
-    if n_validation > 0:
-        validation = ExplicitInteractions(torch.cat(validation_user_ids).long(),
-                                  torch.cat(validation_item_ids).long(),
-                                  torch.cat(validation_ratings), num_items=interactions.num_items)
-
-        return train, validation, test
+    train = data[torch.cat(train_idx)]
+    train = Interactions(interactions=train[0], ratings=train[1],
+                         user_labels=data.user_labels, item_labels=data.item_labels)
+    test = data[torch.cat(test_idx)]
+    test = Interactions(interactions=test[0], ratings=test[1],
+                        user_labels=data.user_labels, item_labels=data.item_labels)
 
     return train, test

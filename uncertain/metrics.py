@@ -1,7 +1,6 @@
 import torch
 import numpy as np
 from tqdm import tqdm
-from uncertain.utils import sample_items
 from sklearn.model_selection import KFold
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.metrics import roc_auc_score, r2_score
@@ -21,16 +20,6 @@ def hit_rate(recommendations, targets):
             hits += 1
 
     return hits / len(recommendations.items)
-
-
-def precision(recommendations, targets):
-
-    hits = torch.zeros_like(recommendations.items)
-    for idx, item in enumerate(recommendations.items):
-        if item in targets:
-            hits[idx] = 1
-
-    return hits.cumsum(0) / torch.arange(1, len(hits)+1, device=hits.device)
 
 
 def surprise(recommendations, model, rated_factor):
@@ -54,17 +43,14 @@ def pearson_correlation(x, y):
     return (x_deviations * y_deviations).sum() / (x_std * y_std)
     
 
-def correlation(error, uncertainty):
+def error_uncertainty_correlation(predictions):
 
-    pearson = pearson_correlation(error, uncertainty)
+    errors = predictions[0]
+    uncertainties = predictions[1]
+    pearson = pearson_correlation(errors, uncertainties).item()
+    spearman = pearson_correlation(errors.argsort().argsort().float(), uncertainties.argsort().argsort().float()).item()
 
-    a = error.clone()
-    b = uncertainty.clone()
-    a[a.argsort()] = torch.arange(len(a), dtype=a.dtype, device=a.device)
-    b[b.argsort()] = torch.arange(len(b), dtype=b.dtype, device=b.device)
-    spearman = pearson_correlation(a, b)
-
-    return pearson, spearman
+    return {'Pearson': pearson, 'Spearman': spearman}
 
 
 def rpi_score(errors, uncertainty):
@@ -115,109 +101,11 @@ def determination(error, uncertainty):
     return r2
 
 
-def recommendation_score(model, test, train=None, relevance_threshold=4, max_k=10):
-    """
-    Compute Precision@k and Recall@k scores. One score
-    is given for every user with interactions in the test
-    set, representing the Precision@k and Recall@k of all their
-    test items.
-    Parameters
-    ----------
-    model: fitted instance of a recommender model
-        The model to evaluate.
-    test: :class:`spotlight.interactions.Interactions`
-        Test interactions.
-    train: :class:`spotlight.interactions.Interactions`, optional
-        Train interactions. If supplied, scores of known
-        interactions will not affect the computed metrics.
-    k: int or tensor of int,
-        The maximum number of predicted items
-    Returns
-    -------
-    (Precision@k, Recall@k): numpy tensor of shape (num_users, len(k))
-        A tuple of Precisions@k and Recalls@k for each user in test.
-        If k is a scalar, will return a tuple of vectors. If k is an
-        tensor, will return a tuple of tensors, where each row corresponds
-        to a user and each column corresponds to a value of k.
-    """
+def get_hits(recommendations, targets):
 
-    precision = []
-    recall = []
-    rri = []
-    precision_denom = torch.arange(1, max_k+1, device=test.interactions.device)
+    hits = torch.zeros_like(recommendations.items)
+    for idx, item in enumerate(recommendations.items):
+        if item in targets:
+            hits[idx] = 1
 
-    for user_id in range(test.num_users):
-
-        if relevance_threshold is not None:
-            targets = test.items()[torch.logical_and(test.users() == user_id,
-                                   test.ratings >= relevance_threshold)]
-        else:
-            targets = test.items()[test.users() == user_id]
-
-        if not len(targets):
-            continue
-
-        predictions, uncertainties = model.recommend(user_id, train)
-        hits = torch.zeros_like(predictions, dtype=torch.bool)
-        for r in range(max_k):
-            if predictions[r] in targets:
-                hits[r] = 1
-        num_hit = hits.cumsum(0)
-
-        precision.append(num_hit / precision_denom)
-        recall.append(num_hit / len(targets))
-        if uncertainties is not None and hits.sum().item() > 0:
-            rri_ = torch.empty(max_k - 1)
-            for i in range(2, max_k+1):
-                unc = uncertainties[:i]
-                rri_[i-2] = (unc.mean() - unc[hits[:i]]).mean() / unc.std()
-            rri.append(rri_)
-
-    precision = torch.vstack(precision).mean(axis=0)
-    recall = torch.vstack(recall).mean(axis=0)
-    if len(rri) > 0:
-        rri = torch.vstack(rri)
-        rri = rri.nansum(0) / (~rri.isnan()).float().sum(0)
-
-    return precision, recall, rri
-
-
-def pairwise(model, test):
-
-    rated_preds = model.predict(test)
-    rated_lim_inf = rated_preds[0] - 1.96 * rated_preds[1].sqrt()
-    counter = 0
-
-    for u in tqdm(range(test.num_users)):
-
-        idx_u = test.users() == u
-        if idx_u.sum() == 0:
-            pass
-        rated = test.interactions[idx_u, 1]
-
-        u_lim_inf = rated_lim_inf[idx_u]
-
-        for idx in range(len(rated)):
-            negatives_ = torch.tensor(sample_items(test.num_items, 5), device=test.interactions.device)
-            negative_preds = model.predict(torch.full_like(negatives_, u), negatives_)
-            negative_lim_sup = negative_preds[0] + 1.96 * negative_preds[1].sqrt()
-            counter += (u_lim_inf[idx] < negative_lim_sup).sum()
-
-    return counter / (len(test)*5)
-
-
-def diversity(model, test, train, top=10):
-
-    avg_div = 0
-    train_csr = train.tocsr()
-    for i in range(1, test.num_users):
-        rec_list = model.recommend(i, train, top)[0].cpu().detach().numpy()
-        items_profile = train_csr[:, rec_list]
-
-        dist = np.zeros((top, top))
-        for k in range(items_profile.shape[1]):
-            for kk in range(k+1, items_profile.shape[1]):
-                dist[k, kk] = np.abs(items_profile[:, k] - items_profile[:, kk]).sum()
-        avg_div += dist.sum()
-
-    return avg_div / (test.num_users * top * (top-1))
+    return hits

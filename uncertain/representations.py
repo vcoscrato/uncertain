@@ -184,7 +184,7 @@ class OrdRecNet(torch.nn.Module):
         self.user_embeddings = ScaledEmbedding(num_users, embedding_dim, sparse=sparse)
         self.item_embeddings = ScaledEmbedding(num_items, embedding_dim, sparse=sparse)
 
-        self.user_betas = ZeroEmbedding(num_users, num_labels-1, sparse=sparse)
+        self.user_betas = ZeroEmbedding(num_users, num_labels - 1, sparse=sparse)
 
     def forward(self, user_ids, item_ids):
         """
@@ -205,7 +205,6 @@ class OrdRecNet(torch.nn.Module):
 
         user_embedding = self.user_embeddings(user_ids).squeeze()
         item_embedding = self.item_embeddings(item_ids).squeeze()
-
         y = (user_embedding * item_embedding).sum(1).reshape(-1, 1)
 
         user_beta = self.user_betas(user_ids)
