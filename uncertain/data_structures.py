@@ -110,18 +110,15 @@ class Interactions(object):
 
     def __repr__(self):
 
-        return ('<{type} interactions dataset ({num_users} users x {num_items} items '
-                'x {num_interactions} interactions).>'
-                .format(
-                    type=self.type,
-                    num_users=self.num_users,
-                    num_items=self.num_items,
-                    num_interactions=len(self)
-                ))
+        return ('<{type} interactions ({num_users} users x {num_items} items x {num_interactions} interactions)>'
+                .format(type=self.type, num_users=self.num_users, num_items=self.num_items, num_interactions=len(self)))
 
     def __getitem__(self, idx):
 
-        return self.interactions[idx], self.ratings[idx]
+        if self.type == 'Explicit':
+            return self.interactions[idx], self.ratings[idx]
+        else:
+            return self.interactions[idx]
 
     def cuda(self):
         """
@@ -192,7 +189,7 @@ class Interactions(object):
             torch.manual_seed(seed)
 
         shuffle_indices = torch.randperm(len(self), device=self.device)
-        
+
         self.interactions = self.interactions[shuffle_indices]
         if self.ratings is not None:
             self.ratings = self.ratings[shuffle_indices]
@@ -214,7 +211,7 @@ class Interactions(object):
         item_pop[:len(count)] = count
 
         return item_pop
-    
+
     def get_item_variance(self):
 
         if self.type == 'Implicit':
