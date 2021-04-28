@@ -5,93 +5,64 @@ import scipy.sparse as sp
 
 class Interactions(object):
     """
-    For *explicit feedback* scenarios: interaction and
-    ratings should be provided for all user-item-rating
-    triplets that were observed in the dataset.
+    Base data structure for Recommendation Systems.
 
     Parameters
     ----------
-    interactions: tensor or tuple
-        A tensor in which lines correspond to
-        interaction instances in the format
-        (user_id, item_id). Or a tuple containing
-        the user_ids and item_ids arrays or tensors.
-    ratings: tensor or array
-        A tensor or array containing the ratings
-        for each interaction. If None implicit
-        signals are assumed.
+    users: tensor
+        The interactions user ids.
+    items: tensor
+        The interactions item ids.
+    scores: tensor
+        For explicit or feedback feedback: The interaction values. If None, Implicit feedback is assumed.
+    timestamps: tensor
+        The interactions timestamps.
     user_labels: tensor, optional
-        Tensor of unique identifiers for the
-        users in the dataset. If passed, then
-        the user interactions are not factorized.
-        This can allow users with no known
-        interactions.
+        Tensor of unique identifiers for the users in the dataset. If passed, then the interactions users are not
+        factorized (this can allow users with no known interactions).
     item_labels: tensor, optional
-        Tensor of unique identifiers for the
-        items in the dataset. If passed, then
-        the item interactions are not factorized.
-        This can allow items with no known
-        interactions.
-
-    Attributes
-    ----------
-    data: tensor
-        A tensor in which lines correspond to
-        data instances in the format (user_id,
-        item_id).
-    ratings: tensor
-        A tensor or array containing the ratings
-        for each interaction. If None implicit
-        signals are assumed.
-    user_labels: tensor
-        Tensor of unique identifiers for the
-        users in the dataset.
-    item_labels: tensor
-        Tensor of unique identifiers for the
-        items in the dataset.
+        Tensor of unique identifiers for the items in the dataset. If passed, then the interaction items are not
+        factorized (this can allow items with no known interactions).
+    score_labels: tensor
+        For ordinal feedback only: The ordered score labels.
+    device: torch.device
+        The machine device in which data is stored.
     """
 
-    def __init__(self, interactions, ratings=None, timestamps=None, user_labels=None, item_labels=None):
+    def __init__(self, users, items, scores=None, timestamps=None,
+                 user_labels=None, item_labels=None, score_labels=None, device=torch.device('cpu')):
 
-        self.interactions = (interactions if torch.is_tensor(interactions) else torch.tensor(interactions).T).long()
-        assert self.interactions.shape[1] == 2, "Interactions should be (n_instances, 2) shaped."
+        self.device = device
+        
+        self.users = self.make_tensor(users).long()
+        self.user_labels = user_labels
+        if self.user_labels is None:
+            self.user_labels, self.users = torch.unique(self.users, return_inverse=True)
+            
+        self.items = self.make_tensor(items).long()
+        self.item_labels = item_labels
+        if self.item_labels is None:
+            self.item_labels, self.items = torch.unique(self.items, return_inverse=True)
+        assert len(self.items) == len(self.items), 'items and items should have same length'
 
-        if ratings is not None:
-            self.ratings = ratings if torch.is_tensor(ratings) else torch.tensor(ratings)
-            assert len(self.ratings) == len(self), "Interaction and ratings should have same length."
-        else:
-            self.ratings = None
+        if scores is not None:
+            assert len(self.users) == len(scores), 'users, items and scores should have same length'
+            if score_labels is not None:
+                self.scores = self.make_tensor(scores).long()
+                self.score_labels = score_labels
+            else:
+                self.scores = self.make_tensor(scores).float()
 
         if timestamps is not None:
-            self.timestamps = timestamps if torch.is_tensor(timestamps) else torch.tensor(timestamps)
-            assert len(self.timestamps) == len(self), "Interaction and timestamps should have same length."
+            assert len(self.users) == len(timestamps), 'users, items and timestamps should have same length'
+            self.timestamps = self.make_tensor(timestamps)
+
+    def make_tensor(self, x):
+
+        if torch.is_tensor(x):
+            return x.to(self.device)
         else:
-            self.timestamps = None
-
-        if user_labels is None:
-            self.user_labels, self.interactions[:, 0] = torch.unique(self.interactions[:, 0], return_inverse=True)
-        else:
-            self.user_labels = user_labels
-        if item_labels is None:
-            self.item_labels, self.interactions[:, 1] = torch.unique(self.interactions[:, 1], return_inverse=True)
-        else:
-            self.item_labels = item_labels
-
-    @property
-    def device(self):
-        return self.interactions.device
-
-    @property
-    def is_cuda(self):
-        return self.interactions.is_cuda
-
-    @property
-    def users(self):
-        return self.interactions[:, 0]
-
-    @property
-    def items(self):
-        return self.interactions[:, 1]
+            return torch.tensor(x).to(self.device)
 
     @property
     def num_users(self):
@@ -103,47 +74,45 @@ class Interactions(object):
 
     @property
     def type(self):
-        return 'Explicit' if self.ratings is not None else 'Implicit'
+        if not hasattr(self, 'scores'):
+            return 'Implicit'
+        if not hasattr(self, 'score_labels'):
+            return 'Explicit'
+        else:
+            return 'Ordinal'
 
     def __len__(self):
-        return self.interactions.shape[0]
+        return len(self.users)
 
     def __repr__(self):
-
         return ('<{type} interactions ({num_users} users x {num_items} items x {num_interactions} interactions)>'
                 .format(type=self.type, num_users=self.num_users, num_items=self.num_items, num_interactions=len(self)))
 
     def __getitem__(self, idx):
-
-        if self.type == 'Explicit':
-            return self.interactions[idx], self.ratings[idx]
+        if hasattr(self, 'scores'):
+            return self.users[idx], self.items[idx], self.scores[idx]
         else:
-            return self.interactions[idx]
+            return self.users[idx], self.items[idx], None
+
+    def minibatch(self, batch_size):
+
+        for i in range(0, len(self), batch_size):
+            yield self[i:i + batch_size]
 
     def cuda(self):
-        """
-        Move data to gpu.
-        """
 
-        self.interactions = self.interactions.cuda()
-        if self.ratings is not None:
-            self.ratings = self.ratings.cuda()
-        if self.timestamps is not None:
-            self.timestamps = self.timestamps.cuda()
-
+        for key in self.__dict__:
+            attr = getattr(self, key)
+            if torch.is_tensor(attr):
+                attr = attr.to('cuda')
         return self
 
     def cpu(self):
-        """
-        Move data to cpu.
-        """
 
-        self.interactions = self.interactions.cpu()
-        if self.ratings is not None:
-            self.ratings = self.ratings.cpu()
-        if self.timestamps is not None:
-            self.timestamps = self.timestamps.cpu()
-
+        for key in self.__dict__:
+            attr = getattr(self, key)
+            if torch.is_tensor(attr):
+                attr = attr.to('cpu')
         return self
 
     def tocoo(self):
@@ -151,9 +120,9 @@ class Interactions(object):
         Transform to a scipy.sparse COO matrix.
         """
 
-        row = self.interactions[:, 0].cpu()
-        col = self.interactions[:, 1].cpu()
-        data = self.ratings.cpu() if self.type == 'Explicit' else torch.ones_like(col)
+        row = self.users.cpu()
+        col = self.items.cpu()
+        data = self.scores.cpu() if self.type == 'Explicit' else torch.ones_like(col)
 
         return sp.coo_matrix((data, (row, col)),
                              shape=(self.num_users, self.num_items))
@@ -167,11 +136,11 @@ class Interactions(object):
 
     def get_rated_items(self, user_id, threshold=None):
 
-        idx = self.interactions[:, 0] == user_id
+        idx = self.users == user_id
         if threshold is None:
-            return self.interactions[idx, 1]
+            return self.items[idx]
         else:
-            return self.interactions[torch.logical_and(idx, self.ratings >= threshold), 1]
+            return self.items[torch.logical_and(idx, self.scores >= threshold)]
 
     def get_negative_items(self, user_id):
 
@@ -190,10 +159,11 @@ class Interactions(object):
 
         shuffle_indices = torch.randperm(len(self), device=self.device)
 
-        self.interactions = self.interactions[shuffle_indices]
-        if self.ratings is not None:
-            self.ratings = self.ratings[shuffle_indices]
-        if self.timestamps is not None:
+        self.users = self.users[shuffle_indices]
+        self.items = self.items[shuffle_indices]
+        if hasattr(self, 'scores'):
+            self.scores = self.scores[shuffle_indices]
+        if hasattr(self, 'timestamps'):
             self.timestamps = self.timestamps[shuffle_indices]
 
     def get_user_profile_length(self):
@@ -215,36 +185,14 @@ class Interactions(object):
     def get_item_variance(self):
 
         if self.type == 'Implicit':
-            raise TypeError('Item variance not defined for implicit ratings.')
+            raise TypeError('Item variance not defined for implicit scores.')
 
         variances = torch.empty(self.num_items, device=self.device)
         for i in range(self.num_items):
-            variances[i] = self.ratings[self.interactions[:, 1] == i].float().var()
+            variances[i] = self.scores[self.items == i].float().var()
         variances[torch.isnan(variances)] = 0
 
         return variances
-
-    def filter_users(self, min_profile_length):
-
-        profile_len = self.get_user_profile_length()
-        idx = profile_len[self.users] >= min_profile_length
-
-        self.interactions = self.interactions[idx]
-        if self.ratings is not None:
-            self.ratings = self.ratings[idx]
-        if self.timestamps is not None:
-            self.timestamps = self.timestamps[idx]
-
-        return self
-
-    def minibatch(self, batch_size):
-
-        if self.type == 'Explicit':
-            for i in range(0, len(self), batch_size):
-                yield self.interactions[i:i + batch_size], self.ratings[i:i + batch_size]
-        else:
-            for i in range(0, len(self), batch_size):
-                yield self.interactions[i:i + batch_size], None
 
 
 class Recommendations(object):

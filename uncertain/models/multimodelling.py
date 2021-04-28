@@ -15,7 +15,7 @@ class Ensemble(Recommender):
 
         self.n_models = n_models
         self.models = [deepcopy(base_model)]
-        self.models[0]._verbose = False
+        self.models[0].verbose = False
         self.models[0]._path = os.getcwd() + 'tmp'
 
         super().__init__(base_model.user_labels, base_model.item_labels, base_model.device)
@@ -34,8 +34,8 @@ class Ensemble(Recommender):
 
         predictions = torch.empty((len(user_ids), len(self.models)), device=user_ids.device)
         for idx, model in enumerate(self.models):
-            model._net.train(False)
-            predictions[:, idx] = model._net(user_ids, item_ids).detach()
+            model.net.train(False)
+            predictions[:, idx] = model.net(user_ids, item_ids).detach()
 
         estimates = predictions.mean(1)
         errors = predictions.std(1)
@@ -52,7 +52,7 @@ class Resample(Recommender):
         self.n_models = n_models
         self.models = []
         self.base_model = deepcopy(base_model)
-        self.base_model._verbose = False
+        self.base_model.verbose = False
         self.base_model._path = os.getcwd()+'tmp'
 
         super().__init__(base_model.user_labels, base_model.item_labels, base_model.device)
@@ -73,8 +73,8 @@ class Resample(Recommender):
 
         predictions = torch.empty((len(user_ids), len(self.models)), device=user_ids.device)
         for idx, model in enumerate(self.models):
-            model._net.train(False)
-            predictions[:, idx] = model._net(user_ids, item_ids).detach()
+            model.net.train(False)
+            predictions[:, idx] = model.net(user_ids, item_ids).detach()
 
         estimates = predictions.mean(1)
         errors = predictions.std(1)

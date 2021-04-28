@@ -12,8 +12,8 @@ class CVUncertainty(object):
     def __init__(self, recommender, uncertainty):
 
         self.recommender = deepcopy(recommender)
-        self.recommender._path += '_temp'
-        self.recommender._verbose = False
+        self.recommender.path += '_temp'
+        self.recommender.verbose = False
         self.uncertainty = uncertainty
 
     def fit(self, train, val):
@@ -29,8 +29,9 @@ class CVUncertainty(object):
         model_cv.fit(fold2, val)
         errors_ = model_cv.predict_interactions(fold1, batch_size=1e3)
 
-        os.remove(self.recommender._path)
-        train_errors = Interactions(torch.vstack((fold2.interactions, fold1.interactions)),
+        os.remove(self.recommender.path)
+        train_errors = Interactions(torch.cat((fold2.users, fold1.users)),
+                                    torch.cat((fold2.users, fold1.users)),
                                     torch.cat((errors, errors_)),
                                     user_labels=train.user_labels, item_labels=train.item_labels)
 

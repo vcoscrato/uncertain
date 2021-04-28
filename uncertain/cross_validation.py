@@ -36,14 +36,10 @@ def random_train_test_split(data, test_percentage=0.2, random_state=None):
 
     cutoff = int((1.0 - test_percentage) * len(data))
 
-    train_interactions = data.interactions[:cutoff]
-    test_interactions = data.interactions[cutoff:]
-
-    train_ratings = None if data.ratings is None else data.ratings[:cutoff]
-    test_ratings = None if data.ratings is None else data.ratings[cutoff:]
-
-    train = Interactions(train_interactions, train_ratings, None, user_labels, item_labels)
-    test = Interactions(test_interactions, test_ratings, None, user_labels, item_labels)
+    u, i, s = data[:cutoff]
+    train = Interactions(u, i, s, user_labels=user_labels, item_labels=item_labels)
+    u, i, s = data[cutoff:]
+    test = Interactions(u, i, s, user_labels=user_labels, item_labels=item_labels)
 
     return train, test
 
@@ -83,7 +79,7 @@ def user_based_split(data, test_percentage=0.2, seed=None):
 
         idx = torch.where(data.users == u)[0]
 
-        if data.timestamps is not None:
+        if hasattr(data, 'timestamps'):
             idx = idx[data.timestamps[idx].argsort()]
         else:
             idx = idx[torch.randperm(len(idx), device=idx.device)]
@@ -93,11 +89,9 @@ def user_based_split(data, test_percentage=0.2, seed=None):
         train_idx.append(idx[:cutoff])
         test_idx.append(idx[cutoff:])
 
-    train = data[torch.cat(train_idx)]
-    train = Interactions(interactions=train[0], ratings=train[1],
-                         user_labels=data.user_labels, item_labels=data.item_labels)
-    test = data[torch.cat(test_idx)]
-    test = Interactions(interactions=test[0], ratings=test[1],
-                        user_labels=data.user_labels, item_labels=data.item_labels)
+    u, i, s = data[torch.cat(train_idx)]
+    train = Interactions(u, i, s, user_labels=data.user_labels, item_labels=data.item_labels)
+    u, i, s = data[torch.cat(test_idx)]
+    test = Interactions(u, i, s, user_labels=data.user_labels, item_labels=data.item_labels)
 
     return train, test

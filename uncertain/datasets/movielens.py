@@ -69,4 +69,4 @@ def get_movielens_dataset(variant='100K'):
 
     user, items, ratings, timestamps = _get_movielens(url)
 
-    return Interactions((user, items), ratings, timestamps)
+    return Interactions(user, items, ratings, timestamps)

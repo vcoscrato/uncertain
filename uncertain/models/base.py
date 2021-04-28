@@ -30,8 +30,8 @@ class Recommender(object):
                 unc = torch.empty(len(interactions), device=self.device)
 
             loader = interactions.minibatch(batch_size)
-            for minibatch_num, (interactions, ratings) in enumerate(loader):
-                preds = self.predict(interactions[:, 0], interactions[:, 1])
+            for minibatch_num, (users, items, _) in enumerate(loader):
+                preds = self.predict(users, items)
                 if self.is_uncertain:
                     est[(minibatch_num * batch_size):((minibatch_num + 1) * batch_size)] = preds[0]
                     unc[(minibatch_num * batch_size):((minibatch_num + 1) * batch_size)] = preds[1]
