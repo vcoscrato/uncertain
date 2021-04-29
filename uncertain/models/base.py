@@ -4,44 +4,12 @@ from uncertain.data_structures import Recommendations
 
 
 class Recommender(object):
-
-    def __init__(self, user_labels=None, item_labels=None, device='cpu'):
-
-        self.user_labels = user_labels
-        self.item_labels = item_labels
-        self.device = device
-
-    @property
-    def num_users(self):
-        return len(self.user_labels)
-
-    @property
-    def num_items(self):
-        return len(self.item_labels)
-
-    def predict_interactions(self, interactions, batch_size=1e100):
-
-        if batch_size > len(interactions):
-            return self.predict(interactions.users, interactions.items)
-        else:
-            batch_size = int(batch_size)
-            est = torch.empty(len(interactions), device=self.device)
-            if self.is_uncertain:
-                unc = torch.empty(len(interactions), device=self.device)
-
-            loader = interactions.minibatch(batch_size)
-            for minibatch_num, (users, items, _) in enumerate(loader):
-                preds = self.predict(users, items)
-                if self.is_uncertain:
-                    est[(minibatch_num * batch_size):((minibatch_num + 1) * batch_size)] = preds[0]
-                    unc[(minibatch_num * batch_size):((minibatch_num + 1) * batch_size)] = preds[1]
-                else:
-                    est[(minibatch_num * batch_size):((minibatch_num + 1) * batch_size)] = preds
-
-            if self.is_uncertain:
-                return est, unc
-            else:
-                return est
+    """
+    Base class for recommendation systems.
+    """
+    def __init__(self, **kwargs):
+        for key, value in kwargs.items():
+            setattr(self, key, value)
 
     def predict_user(self, user_id):
 
@@ -50,28 +18,32 @@ class Recommender(object):
 
         return self.predict(user_ids, item_ids)
 
-    def recommend(self, user_id, train=None, top=10):
+    def recommend(self, user, remove_items=None, top=10):
 
-        predictions = self.predict_user(user_id=user_id)
+        predictions = self.predict_user(user_id=user)
 
         if not self.is_uncertain:
             predictions = predictions
-            uncertainties = None
         else:
             uncertainties = predictions[1]
             predictions = predictions[0]
 
-        if train is not None:
-            rated = train.get_rated_items(user_id)
-            predictions[rated] = -float('inf')
-            ranking = predictions.argsort(descending=True)[:-len(rated)][:top]
+        if remove_items is not None:
+            predictions[remove_items] = -float('inf')
+            ranking = predictions.argsort(descending=True)[:-len(remove_items)][:top]
         else:
             ranking = predictions.argsort(descending=True)[:top]
 
+        kwargs = {'user': user, 'items': ranking}
         if self.is_uncertain:
-            uncertainties = uncertainties[ranking]
+            kwargs['uncertainties'] = uncertainties[ranking]
 
-        return Recommendations(user_id, ranking, self.item_labels[ranking], uncertainties)
+        if hasattr(self, 'user_labels'):
+            kwargs['user_label'] = self.user_labels[user_id]
+        if hasattr(self, 'item_labels'):
+            kwargs['item_labels'] = self.item_labels[ranking.cpu()]
+
+        return Recommendations(**kwargs)
 
     def sample_items(self, shape):
 
@@ -80,11 +52,11 @@ class Recommender(object):
 
 class UncertainWrapper(Recommender):
     """
-    Wraps a rating estimator with an uncertainty estimator.
+    Wraps a score estimator with an uncertainty estimator.
 
     Parameters
     ----------
-    ratings: :class:`uncertain.models.base`
+    scores: :class:`uncertain.models.base`
         A recommendation model.
     uncertainty: :class:`uncertain.models.base`
         An uncertainty estimator: A class containing a predict
@@ -92,14 +64,12 @@ class UncertainWrapper(Recommender):
         given user, item pairs.
     """
 
-    def __init__(self,
-                 ratings,
-                 uncertainty):
+    def __init__(self, interactions, scores, uncertainty):
 
-        self.ratings = ratings
+        self.scores = scores
         self.uncertainty = uncertainty
 
-        super().__init__(ratings.user_labels, ratings.item_labels, ratings.device)
+        super().__init__(**interactions.pass_args())
 
     @property
     def is_uncertain(self):
@@ -107,10 +77,10 @@ class UncertainWrapper(Recommender):
 
     def predict(self, interactions=None, user_id=None):
 
-        ratings = self.ratings.predict(interactions, user_id)
+        scores = self.scores.predict(interactions, user_id)
         uncertainty = self.uncertainty.predict(interactions, user_id)
 
-        return ratings, uncertainty
+        return scores, uncertainty
 
 
 class ItemPopularity(Recommender):
@@ -118,7 +88,7 @@ class ItemPopularity(Recommender):
     def __init__(self, interactions):
 
         self.item_popularity = interactions.get_item_popularity()
-        super().__init__(interactions.user_labels, interactions.item_labels, device=interactions.device)
+        super().__init__(**interactions.pass_args())
 
     @property
     def is_uncertain(self):
@@ -146,7 +116,7 @@ class UserProfileLength(Recommender):
     def __init__(self, interactions):
 
         self.user_profile = interactions.get_user_profile_length()
-        super().__init__(interactions.user_labels, interactions.item_labels, device=interactions.device)
+        super().__init__(**interactions.pass_args())
 
     @property
     def is_uncertain(self):
@@ -162,7 +132,7 @@ class ItemVariance(Recommender):
     def __init__(self, interactions):
 
         self.item_variance = interactions.get_item_variance()
-        super().__init__(interactions.user_labels, interactions.item_labels, device=interactions.device)
+        super().__init__(**interactions.pass_args())
 
     @property
     def is_uncertain(self):

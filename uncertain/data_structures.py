@@ -9,41 +9,51 @@ class Interactions(object):
 
     Parameters
     ----------
-    users: tensor
-        The interactions user ids.
+    users: tensor of ints
+        The interactions user ids. Should be integers in [0, n_users].
     items: tensor
-        The interactions item ids.
+        The interactions item ids. Should be integers in [0, items].
     scores: tensor
-        For explicit or feedback feedback: The interaction values. If None, Implicit feedback is assumed.
+        For explicit or ordinal feedback feedback: The interaction values. If None, Implicit feedback is assumed.
     timestamps: tensor
         The interactions timestamps.
+    n_users: int, optional
+        The number of users. If none, inferred from max(users)+1.
+    n_items: int, optional
+        The number of items. If none, inferred from max(items)+1.
     user_labels: tensor, optional
-        Tensor of unique identifiers for the users in the dataset. If passed, then the interactions users are not
-        factorized (this can allow users with no known interactions).
+        Tensor of unique identifiers for the users in the dataset. user_labels[u] is the label of the u-th user.
     item_labels: tensor, optional
-        Tensor of unique identifiers for the items in the dataset. If passed, then the interaction items are not
-        factorized (this can allow items with no known interactions).
+        Tensor of unique identifiers for the items in the dataset. item_labels[i] is the label of the i-th user
     score_labels: tensor
         For ordinal feedback only: The ordered score labels.
     device: torch.device
-        The machine device in which data is stored.
+        The computing device in which data should be stored.
     """
 
-    def __init__(self, users, items, scores=None, timestamps=None,
+    def __init__(self, users, items, scores=None, timestamps=None, num_users=None, num_items=None,
                  user_labels=None, item_labels=None, score_labels=None, device=torch.device('cpu')):
 
         self.device = device
         
         self.users = self.make_tensor(users).long()
-        self.user_labels = user_labels
-        if self.user_labels is None:
-            self.user_labels, self.users = torch.unique(self.users, return_inverse=True)
+        if num_users is None:
+            self.num_users = torch.max(self.users).item() + 1
+        else:
+            assert num_users > torch.max(self.users), 'num_users should be > max(users)'
+            self.num_users = num_users
+        if user_labels is not None:
+            self.user_labels = user_labels
             
         self.items = self.make_tensor(items).long()
-        self.item_labels = item_labels
-        if self.item_labels is None:
-            self.item_labels, self.items = torch.unique(self.items, return_inverse=True)
         assert len(self.items) == len(self.items), 'items and items should have same length'
+        if num_items is None:
+            self.num_items = torch.max(self.items).item() + 1
+        else:
+            assert num_items > torch.max(self.items), 'num_items should be > max(items)'
+            self.num_items = num_items
+        if item_labels is not None:
+            self.item_labels = item_labels
 
         if scores is not None:
             assert len(self.users) == len(scores), 'users, items and scores should have same length'
@@ -63,14 +73,6 @@ class Interactions(object):
             return x.to(self.device)
         else:
             return torch.tensor(x).to(self.device)
-
-    @property
-    def num_users(self):
-        return len(self.user_labels)
-
-    @property
-    def num_items(self):
-        return len(self.item_labels)
 
     @property
     def type(self):
@@ -99,21 +101,25 @@ class Interactions(object):
         for i in range(0, len(self), batch_size):
             yield self[i:i + batch_size]
 
-    def cuda(self):
+    def to_device(self, device):
 
-        for key in self.__dict__:
-            attr = getattr(self, key)
-            if torch.is_tensor(attr):
-                attr = attr.to('cuda')
+        self.device = torch.device('cuda')
+        for key, value in self.__dict__.items():
+            if torch.is_tensor(value):
+                setattr(self, key, value.to(device))
         return self
 
-    def cpu(self):
+    def pass_args(self):
 
-        for key in self.__dict__:
-            attr = getattr(self, key)
-            if torch.is_tensor(attr):
-                attr = attr.to('cpu')
-        return self
+        kwargs = {'num_users': self.num_users, 'num_items': self.num_items, 'device': self.device}
+        if hasattr(self, 'user_labels'):
+            kwargs['user_label'] = self.user_labels
+        if hasattr(self, 'item_labels'):
+            kwargs['item_labels'] = self.item_labels
+        if hasattr(self, 'score_labels'):
+            kwargs['score_labels'] = self.score_labels
+
+        return kwargs
 
     def tocoo(self):
         """
@@ -202,10 +208,12 @@ class Recommendations(object):
 
     Parameters
     ----------
-    ID: int
+    user: int
         user identifier
     items: tensor
         A tensor containing the recommended item ids.
+    user_label: str
+
     item_labels: tensor
         The labels of the recommended items.
     uncertainties: tensor
@@ -214,16 +222,17 @@ class Recommendations(object):
 
     """
 
-    def __init__(self, ID, items, item_labels, uncertainties=None):
+    def __init__(self, user, items, user_label=None, item_labels=None, uncertainties=None):
 
-        self.ID = ID
+        self.user = user
         self.items = items
-        self.item_labels = item_labels
+        self.user_label = user_label or user
+        self.item_labels = item_labels or items
         self.uncertainties = uncertainties
 
     def __repr__(self):
 
-        s = 'Recommendation list for user {}: \n'.format(self.ID)
+        s = 'Recommendation list for user {}: \n'.format(self.user_label)
         for i in range(len(self.items)):
             s += 'Item: {}'.format(self.item_labels[i])
             if self.uncertainties is not None:

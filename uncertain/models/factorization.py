@@ -9,6 +9,7 @@ from uncertain.losses import funk_svd_loss, cpmf_loss, max_prob_loss
 class LatentFactorRecommender(Recommender):
 
     def __init__(self,
+                 embedding_dim,
                  batch_size,
                  initial_lr,
                  l2_penalty,
@@ -19,12 +20,13 @@ class LatentFactorRecommender(Recommender):
                  verbose=True,
                  max_epochs=float('inf')):
 
+        self.embedding_dim = embedding_dim
         self.batch_size = batch_size
         self.initial_lr = initial_lr
         self.l2_penalty = l2_penalty
         self.tolerance = tolerance
         self.min_improvement = min_improvement
-        self.sparse=sparse
+        self.sparse = sparse
         self.path = path
         self.verbose = verbose
         self.max_epochs = max_epochs
@@ -49,14 +51,8 @@ class LatentFactorRecommender(Recommender):
 
     def initialize(self, interactions):
 
-        self.type = interactions.type
-        self.device = interactions.device
-
-        (self.user_labels,
-         self.item_labels,
-         self.num_ratings) = (interactions.user_labels,
-                              interactions.item_labels,
-                              len(interactions))
+        for key, value in interactions.pass_args().items():
+            setattr(self, key, value)
 
         self.net = self._construct_net()
 
@@ -75,12 +71,11 @@ class LatentFactorRecommender(Recommender):
     def _forward_pass(self, batch_users, batch_items, batch_ratings):
 
         predictions = self.net(batch_users, batch_items)
-        if self.type != 'Implicit':
-            return self.loss_func(predictions, batch_ratings)
-        else:
+        if batch_ratings is None:
             predictions = self.net(batch_users, batch_items)
             negative_predictions = self._get_negative_prediction(batch_users)
             return self.loss_func(predictions, predicted_negative=negative_predictions)
+        return self.loss_func(predictions, batch_ratings)
 
     def _get_negative_prediction(self, user_ids):
 
@@ -189,9 +184,9 @@ class LatentFactorRecommender(Recommender):
             raise Exception('Model has no item_embeddings.')
 
 
-class Linear(LatentFactorRecommender):
+class FunkSVD(LatentFactorRecommender):
     """
-    An Explicit feedback bias model.
+    An Explicit feedback matrix factorization model.
 
     Parameters
     ----------
@@ -221,71 +216,8 @@ class Linear(LatentFactorRecommender):
 
     def _construct_net(self):
 
-        return BiasNet(self.num_users, self.num_items, self.sparse).to(self.device)
-
-    def predict(self, user_ids, item_ids):
-        """
-        Make predictions: given a user id, compute the net forward pass.
-
-        Parameters
-        ----------
-
-        user_ids: int or array
-           If int, will predict the recommendation scores for this
-           user for all items in item_ids. If an array, will predict
-           scores for all (user, item) pairs defined by user_ids and
-           item_ids.
-        item_ids: array, optional
-            Array containing the item ids for which prediction scores
-            are desired. If not supplied, predictions for all items
-            will be computed.
-
-        Returns
-        -------
-
-        predictions: np.array
-            Predicted scores for all items in item_ids.
-        """
-
-        with torch.no_grad():
-            out = self.net(user_ids, item_ids)
-
-        return out
-
-
-class FunkSVD(LatentFactorRecommender):
-    """
-    An Explicit feedback matrix factorization model.
-
-    Parameters
-    ----------
-    embedding_dim: int
-        The dimension of the latent factors. If 0, then
-        a bias model is used.
-    n_iter: int
-        Number of iterations to run.
-    batch_size: int
-        Minibatch size.
-    l2: float, optional
-        L2 loss penalty.
-    learning_rate: float
-        Initial learning rate.
-    sparse: boolean
-        Use sparse gradients for embedding layers.
-    """
-
-    def __init__(self, embedding_dim, **kwargs):
-
-        self.embedding_dim = embedding_dim
-        self.loss_func = funk_svd_loss
-        super().__init__(**kwargs)
-
-    @property
-    def is_uncertain(self):
-        return False
-
-    def _construct_net(self):
-        
+        if self.embedding_dim == 0:
+            return BiasNet(self.num_users, self.num_items, self.sparse).to(self.device)
         return FunkSVDNet(self.num_users, self.num_items, self.embedding_dim, self.sparse).to(self.device)
 
     def predict(self, user_ids, item_ids):
@@ -320,9 +252,8 @@ class FunkSVD(LatentFactorRecommender):
 
 class CPMF(LatentFactorRecommender):
 
-    def __init__(self, embedding_dim, **kwargs):
+    def __init__(self, **kwargs):
 
-        self.embedding_dim = embedding_dim
         self.loss_func = cpmf_loss
         super().__init__(**kwargs)
 
@@ -366,12 +297,9 @@ class CPMF(LatentFactorRecommender):
 
 class OrdRec(LatentFactorRecommender):
 
-    def __init__(self, ratings_labels, embedding_dim, predict_strategy='std', **kwargs):
+    def __init__(self, **kwargs):
 
-        self.rating_labels = ratings_labels
-        self.embedding_dim = embedding_dim
         self.loss_func = max_prob_loss
-        self.predict_strategy = predict_strategy
         super().__init__(**kwargs)
 
     @property
@@ -380,7 +308,7 @@ class OrdRec(LatentFactorRecommender):
 
     def _construct_net(self):
 
-        return OrdRecNet(self.num_users, self.num_items, len(self.rating_labels),
+        return OrdRecNet(self.num_users, self.num_items, len(self.score_labels),
                          self.embedding_dim, self.sparse).to(self.device)
 
     def predict(self, user_ids, item_ids):
@@ -410,11 +338,10 @@ class OrdRec(LatentFactorRecommender):
         with torch.no_grad():
             out = self.net(user_ids, item_ids)
 
-        mean = (out * self.rating_labels).sum(1)
-        if self.predict_strategy == 'std':
-            var = ((out * self.rating_labels ** 2).sum(1) - mean ** 2).abs()
-        if self.predict_strategy == 'consensus':
-            aux = torch.vstack([mean] * len(self.rating_labels)).T - self.rating_labels
-            var = 1 / (1 + (out * torch.log2(1 - torch.abs(aux) / (len(self.rating_labels) - 1))).sum(1))
+        mean = (out * self.score_labels).sum(1)
+        var = ((out * self.score_labels ** 2).sum(1) - mean ** 2).abs()
+
+        # aux = torch.vstack([mean] * len(self.score_labels)).T - self.score_labels
+        # var = 1 / (1 + (out * torch.log2(1 - torch.abs(aux) / (len(self.score_labels) - 1))).sum(1))
 
         return mean, var
