@@ -226,8 +226,14 @@ class Recommendations(object):
 
         self.user = user
         self.items = items
-        self.user_label = user_label or user
-        self.item_labels = item_labels or items
+        if user_label is None:
+            self.user_label = user
+        else:
+            self.user_label = user_label
+        if item_labels is None:
+            self.item_labels = items
+        else:
+            self.item_labels = item_labels
         self.uncertainties = uncertainties
 
     def __repr__(self):
