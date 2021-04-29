@@ -85,7 +85,6 @@ class LatentFactorRecommender(Recommender):
     def _get_negative_prediction(self, user_ids):
 
         negative_prediction = self.net(user_ids, self.sample_items(len(user_ids)))
-
         return negative_prediction
 
     def _one_epoch(self, loader):
@@ -141,11 +140,7 @@ class LatentFactorRecommender(Recommender):
                          (batch_users, batch_items, batch_ratings)) in enumerate(validation_loader):
 
                         self.net.eval()
-                        predictions = self.net(batch_users, batch_items)
-                        if train.type == 'Implicit':
-                            epoch_loss += self.loss_func(predictions).item()
-                        else:
-                            epoch_loss += self.loss_func(predictions, batch_ratings).item()
+                        epoch_loss += self._forward_pass(batch_users, batch_items, batch_ratings).item()
 
                     epoch_loss /= minibatch_num + 1
 

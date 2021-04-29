@@ -35,9 +35,9 @@ def funk_svd_loss(predicted_ratings, observed_ratings=None, predicted_negative=N
         assert_no_grad(observed_ratings)
         return ((observed_ratings - predicted_ratings) ** 2).mean()
     else:
-        positive = (1.0 - torch.sigmoid(predicted_ratings)).mean()
-        negative = torch.sigmoid(predicted_negative).mean() if predicted_negative is not None else 0
-        return (positive + negative) / 2
+        positive = (1.0 - torch.sigmoid(predicted_ratings))
+        negative = torch.sigmoid(predicted_negative)
+        return torch.cat((positive, negative)).mean()
 
 
 def cpmf_loss(predicted_ratings, observed_ratings=None, predicted_negative=None):
