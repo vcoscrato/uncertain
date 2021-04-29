@@ -43,7 +43,7 @@ class Interactions(object):
             assert num_users > torch.max(self.users), 'num_users should be > max(users)'
             self.num_users = num_users
         if user_labels is not None:
-            self.user_labels = user_labels
+            self.user_labels = list(user_labels)
             
         self.items = self.make_tensor(items).long()
         assert len(self.items) == len(self.items), 'items and items should have same length'
@@ -53,7 +53,7 @@ class Interactions(object):
             assert num_items > torch.max(self.items), 'num_items should be > max(items)'
             self.num_items = num_items
         if item_labels is not None:
-            self.item_labels = item_labels
+            self.item_labels = list(item_labels)
 
         if scores is not None:
             assert len(self.users) == len(scores), 'users, items and scores should have same length'
@@ -113,7 +113,7 @@ class Interactions(object):
 
         kwargs = {'num_users': self.num_users, 'num_items': self.num_items, 'device': self.device}
         if hasattr(self, 'user_labels'):
-            kwargs['user_label'] = self.user_labels
+            kwargs['user_labels'] = self.user_labels
         if hasattr(self, 'item_labels'):
             kwargs['item_labels'] = self.item_labels
         if hasattr(self, 'score_labels'):

@@ -89,15 +89,9 @@ def user_based_split(data, test_percentage=0.2, seed=None):
         train_idx.append(idx[:cutoff])
         test_idx.append(idx[cutoff:])
 
-    kwargs = {'num_users': data.num_users, 'num_items': data.num_items}
-    if hasattr(data, 'user_labels'):
-        kwargs['user_labels'] = data.user_labels
-    if hasattr(data, 'item_labels'):
-        kwargs['user_labels'] = data.user_labels
-
     u, i, s = data[torch.cat(train_idx)]
-    train = Interactions(u, i, s, **kwargs)
+    train = Interactions(u, i, s, **data.pass_args())
     u, i, s = data[torch.cat(test_idx)]
-    test = Interactions(u, i, s, **kwargs)
+    test = Interactions(u, i, s, **data.pass_args())
 
     return train, test

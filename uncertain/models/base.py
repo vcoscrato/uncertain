@@ -39,9 +39,9 @@ class Recommender(object):
             kwargs['uncertainties'] = uncertainties[ranking]
 
         if hasattr(self, 'user_labels'):
-            kwargs['user_label'] = self.user_labels[user_id]
+            kwargs['user_label'] = self.user_labels[user]
         if hasattr(self, 'item_labels'):
-            kwargs['item_labels'] = self.item_labels[ranking.cpu()]
+            kwargs['item_labels'] = [self.item_labels[i] for i in ranking.cpu().tolist()]
 
         return Recommendations(**kwargs)
 
