@@ -20,6 +20,9 @@ class Recommender(object):
 
     def recommend(self, user, remove_items=None, top=10):
 
+        if isinstance(user, str):
+            user = self.user_labels.index(user)
+
         predictions = self.predict_user(user_id=user)
 
         if not self.is_uncertain:

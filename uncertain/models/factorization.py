@@ -297,14 +297,15 @@ class CPMF(LatentFactorRecommender):
 
 class OrdRec(LatentFactorRecommender):
 
-    def __init__(self, **kwargs):
+    def __init__(self, numeric=True, **kwargs):
 
+        self.numeric = numeric
         self.loss_func = max_prob_loss
         super().__init__(**kwargs)
 
     @property
     def is_uncertain(self):
-        return True
+        return self.numeric
 
     def _construct_net(self):
 
@@ -338,10 +339,14 @@ class OrdRec(LatentFactorRecommender):
         with torch.no_grad():
             out = self.net(user_ids, item_ids)
 
-        mean = (out * self.score_labels).sum(1)
-        var = ((out * self.score_labels ** 2).sum(1) - mean ** 2).abs()
+        if self.numeric:
+            mean = (out * self.score_labels).sum(1)
+            var = ((out * self.score_labels ** 2).sum(1) - mean ** 2).abs()
+            return mean, var
+
+        else:
+            return out[:, -1]
 
         # aux = torch.vstack([mean] * len(self.score_labels)).T - self.score_labels
         # var = 1 / (1 + (out * torch.log2(1 - torch.abs(aux) / (len(self.score_labels) - 1))).sum(1))
 
-        return mean, var

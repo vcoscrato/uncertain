@@ -135,7 +135,7 @@ class Interactions(object):
 
     def get_rated_items(self, user, threshold=None):
 
-        if isinstance(a, str):
+        if isinstance(user, str):
             user = self.user_labels.index(user)
 
         idx = self.users == user
@@ -146,7 +146,7 @@ class Interactions(object):
 
     def get_negative_items(self, user):
 
-        if isinstance(a, str):
+        if isinstance(user, str):
             user = self.user_labels.index(user)
 
         rated_items = self.get_rated_items(user)

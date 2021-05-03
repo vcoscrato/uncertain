@@ -4,12 +4,11 @@ from .base import Recommendations
 
 class ItemKNN(object):
 
-    def __init__(self, item_similarities, k=10, weighted=True, **kwargs):
+    def __init__(self, item_similarities, k=10, weighted=True):
 
         self.item_similarities = item_similarities
         self.k = k
         self.weighted = weighted
-        super().__init__(num_items=len(item_similarities), **kwargs)
 
     def recommend(self, user_profile):
 
