@@ -133,24 +133,23 @@ class Interactions(object):
         return sp.coo_matrix((data, (row, col)),
                              shape=(self.num_users, self.num_items))
 
-    def tocsr(self):
-        """
-        Transform to a scipy.sparse CSR matrix.
-        """
+    def get_rated_items(self, user, threshold=None):
 
-        return self.tocoo().tocsr()
+        if isinstance(a, str):
+            user = self.user_labels.index(user)
 
-    def get_rated_items(self, user_id, threshold=None):
-
-        idx = self.users == user_id
+        idx = self.users == user
         if threshold is None:
             return self.items[idx]
         else:
             return self.items[torch.logical_and(idx, self.scores >= threshold)]
 
-    def get_negative_items(self, user_id):
+    def get_negative_items(self, user):
 
-        rated_items = self.get_rated_items(user_id)
+        if isinstance(a, str):
+            user = self.user_labels.index(user)
+
+        rated_items = self.get_rated_items(user)
         negative_items = torch.tensor([i for i in range(self.num_items) if i not in rated_items],
                                       device=rated_items.device)
         return negative_items
