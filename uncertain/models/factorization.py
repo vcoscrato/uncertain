@@ -312,7 +312,7 @@ class OrdRec(LatentFactorRecommender):
         return OrdRecNet(self.num_users, self.num_items, len(self.score_labels),
                          self.embedding_dim, self.sparse).to(self.device)
 
-    def predict(self, user_ids, item_ids):
+    def predict(self, user_ids, item_ids, return_distribution=False):
         """
         Make predictions: given a user id, compute the net forward pass.
 
@@ -328,16 +328,20 @@ class OrdRec(LatentFactorRecommender):
             Array containing the item ids for which prediction scores
             are desired. If not supplied, predictions for all items
             will be computed.
-
+        return_distribution: boolean
+            If True, return the probability distributions.
         Returns
         -------
 
         predictions: np.array
             Predicted scores for all items in item_ids.
+
         """
 
         with torch.no_grad():
             out = self.net(user_ids, item_ids)
+
+        if return
 
         if self.numeric:
             mean = (out * self.score_labels).sum(1)

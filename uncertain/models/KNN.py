@@ -12,7 +12,7 @@ class ItemKNN(object):
 
     def recommend(self, user_profile):
 
-        relevance = np.empty(len(item_similarities))
+        relevance = np.empty(len(self.item_similarities))
         for idx, item in self.item_similarities:
             if idx in user_profile:
                 relevance[idx] = -np.inf
