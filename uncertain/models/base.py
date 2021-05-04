@@ -11,12 +11,12 @@ class Recommender(object):
         for key, value in kwargs.items():
             setattr(self, key, value)
 
-    def predict_user(self, user_id):
+    def predict_user(self, user_id, **kwargs):
 
         item_ids = torch.arange(self.num_items, device=self.device)
         user_ids = torch.full_like(item_ids, user_id)
 
-        return self.predict(user_ids, item_ids)
+        return self.predict(user_ids, item_ids, **kwargs)
 
     def recommend(self, user, remove_items=None, top=10):
 
