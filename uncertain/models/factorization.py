@@ -341,7 +341,8 @@ class OrdRec(LatentFactorRecommender):
         with torch.no_grad():
             out = self.net(user_ids, item_ids)
 
-        if return
+        if return_distribution:
+            return out
 
         if self.numeric:
             mean = (out * self.score_labels).sum(1)
