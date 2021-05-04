@@ -19,4 +19,4 @@ class ItemKNN(object):
             else:
                 relevance[idx] = np.sum(item[user_profile][:self.k])
 
-        return Recommendations(user='', items=relevance.argsort()[:10])
+        return Recommendations(user='', items=relevance.argsort()[-10:])
