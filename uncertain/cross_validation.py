@@ -16,11 +16,9 @@ def random_train_test_split(data, test_percentage=0.2, random_state=None):
     ----------
 
     data: :class:`uncertain.data_structures.Interactions`
-        The interactions to shuffle.
+        The interactions to split.
     test_percentage: float, optional
         The fraction of interactions to place in the test set.
-    random_state: np.random.RandomState, optional
-        The random state used for the shuffle.
 
     Returns
     -------
@@ -32,7 +30,6 @@ def random_train_test_split(data, test_percentage=0.2, random_state=None):
 
     user_labels = data.user_labels
     item_labels = data.item_labels
-    data.shuffle(random_state)
 
     cutoff = int((1.0 - test_percentage) * len(data))
 
@@ -44,7 +41,7 @@ def random_train_test_split(data, test_percentage=0.2, random_state=None):
     return train, test
 
 
-def user_based_split(data, test_percentage=0.2, seed=None):
+def user_based_split(data, test_percentage=0.2, min_profile_length=2, seed=None):
     """
     Split interactions between training and testing, guarantee
     that each user have a 'test_percentage' fraction of ratings
@@ -55,9 +52,11 @@ def user_based_split(data, test_percentage=0.2, seed=None):
     ----------
 
     data: :class:`uncertain.data_structures.Interactions`
-        The interactions to shuffle.
-    test_percentage: float, optional
+        The interactions to split.
+    test_percentage: float
         The fraction of interactions to place in the test set.
+    min_profile_length: int
+        The minimum profile length for a user to be considered when testing.
     seed: int
         Seed to pass to RNG. Ignored if timestamps are provided.
 
@@ -78,6 +77,10 @@ def user_based_split(data, test_percentage=0.2, seed=None):
     for u in range(data.num_users):
 
         idx = torch.where(data.users == u)[0]
+
+        if len(idx) < min_profile_length:
+            train_idx.append(idx)
+            continue
 
         if hasattr(data, 'timestamps'):
             idx = idx[data.timestamps[idx].argsort()]

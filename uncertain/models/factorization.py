@@ -13,6 +13,7 @@ class LatentFactorRecommender(Recommender):
                  batch_size,
                  initial_lr,
                  l2_penalty,
+                 l2_reduction_factor=1,
                  tolerance=1,
                  min_improvement=0,
                  sparse=False,
@@ -24,6 +25,7 @@ class LatentFactorRecommender(Recommender):
         self.batch_size = batch_size
         self.initial_lr = initial_lr
         self.l2_penalty = l2_penalty
+        self.l2_reduction_factor = l2_reduction_factor
         self.tolerance = tolerance
         self.min_improvement = min_improvement
         self.sparse = sparse
@@ -118,7 +120,7 @@ class LatentFactorRecommender(Recommender):
 
         epoch = 1
         tol = 0
-        min_loss = float('inf')
+        self.min_loss = float('inf')
         while epoch < self.max_epochs:
 
             train.shuffle(epoch)
@@ -145,25 +147,29 @@ class LatentFactorRecommender(Recommender):
                 epoch_loss = train_loss
                 out = 'Epoch {} train loss: {},'.format(epoch, epoch_loss)
 
-            if epoch_loss < (min_loss * (1 - self.min_improvement)):
+            if epoch_loss < (self.min_loss * (1 - self.min_improvement)):
                 tol = 0
-                min_loss = epoch_loss
+                self.min_loss = epoch_loss
                 out += ' - Loss decrease above threshold.'
                 epoch += 1
                 torch.save(self.net.state_dict(), self.path)
 
             else:
+                out += ' - Loss did not improve enough.'
                 tol += 1
-                self.net.load_state_dict(torch.load(self.path))
                 if tol > self.tolerance:
-                    out += ' - Loss did not improve enough. Ending training.'
+                    out += ' Ending training.'
+                    self.net.load_state_dict(torch.load(self.path))
                     if self.verbose:
                         print(out)
                     break
-                else:
-                    out += ' - Loss did not improve enough. Reducing learning rate.'
+                elif self.l2_reduction_factor != 1:
+                    out += ' Reducing learning rate.'
+                    self.net.load_state_dict(torch.load(self.path))
                     for g in self._optimizer.param_groups:
                         g['lr'] /= 2
+                else:
+                    out += ' Trying again.'
 
             if self.verbose:
                 print(out)
