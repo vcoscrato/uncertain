@@ -133,6 +133,27 @@ class Interactions(torch.utils.data.Dataset):
         return torch.utils.data.DataLoader(self, batch_size=batch_size,
                                            drop_last=True, shuffle=True, num_workers=torch.get_num_threads())
 
+    def split(self, test_percentage, min_profile_length=0, seed=0):
+        train_idx = []
+        test_idx = []
+        if seed is not None:
+            torch.manual_seed(seed)
+        for u in range(self.num_users):
+            idx = torch.where(self.users == u)[0]
+            if len(idx) < min_profile_length:
+                train_idx.append(idx)
+                continue
+            if hasattr(self, 'timestamps'):
+                idx = idx[self.timestamps[idx].argsort()]
+            else:
+                idx = idx[torch.randperm(len(idx))]
+            cutoff = int((1.0 - test_percentage) * len(idx))
+            train_idx.append(idx[:cutoff])
+            test_idx.append(idx[cutoff:])
+        train = Interactions(*self[torch.cat(train_idx)], **self.pass_args())
+        test = Interactions(*self[torch.cat(test_idx)], **self.pass_args())
+        return train, test
+
 
 class Recommendations(object):
 
