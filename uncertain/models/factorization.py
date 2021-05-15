@@ -2,7 +2,6 @@ import torch
 import pytorch_lightning as pl
 from uncertain.core import Recommender
 from uncertain.layers import ZeroEmbedding, ScaledEmbedding
-from uncertain.losses import funk_svd_loss, cpmf_loss, max_prob_loss
 
 
 class ExplicitFactorizationModel(pl.LightningModule, Recommender):
@@ -26,6 +25,9 @@ class ExplicitFactorizationModel(pl.LightningModule, Recommender):
         dot = (user_embedding * item_embedding).sum(1)
         return dot
 
+    def loss_func(self, predicted_ratings, observed_ratings):
+        return ((observed_ratings - predicted_ratings) ** 2).mean()
+
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
         return optimizer
@@ -38,14 +40,14 @@ class ExplicitFactorizationModel(pl.LightningModule, Recommender):
     def training_step(self, train_batch, batch_idx):
         users, items, ratings = train_batch
         output = self.forward(users, items)
-        loss = funk_svd_loss(output, ratings)
+        loss = self.loss_func(output, ratings)
         self.log('train_loss', loss)
         return loss
 
     def validation_step(self, val_batch, batch_idx):
         users, items, ratings = val_batch
         output = self.forward(users, items)
-        loss = funk_svd_loss(output, ratings)
+        loss = self.loss_func(output, ratings)
         self.log('val_loss', loss)
 
     def predict(self, user_id):
@@ -86,6 +88,10 @@ class ExplicitCPMF(pl.LightningModule, Recommender):
         var = self.var_activation(user_gamma + item_gamma)
         return dot, var
 
+    def loss_func(self, predicted_ratings, observed_ratings):
+        mean, variance = predicted_ratings
+        return (((observed_ratings - mean) ** 2) / variance).mean() + torch.log(variance).mean()
+
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
         return optimizer
@@ -98,14 +104,14 @@ class ExplicitCPMF(pl.LightningModule, Recommender):
     def training_step(self, train_batch, batch_idx):
         users, items, ratings = train_batch
         output = self.forward(users, items)
-        loss = cpmf_loss(output, ratings)
+        loss = self.loss_func(output, ratings)
         self.log('train_loss', loss)
         return loss
 
     def validation_step(self, val_batch, batch_idx):
         users, items, ratings = val_batch
         output = self.forward(users, items)
-        loss = cpmf_loss(output, ratings)
+        loss = self.loss_func(output, ratings)
         self.log('val_loss', loss)
 
     def predict(self, user_id):
@@ -147,6 +153,9 @@ class OrdRec(pl.LightningModule, Recommender):
         user_distribution[:, 1:] -= user_distribution[:, :-1].clone()
         return user_distribution
 
+    def loss_func(self, predicted_ratings, observed_ratings):
+        return -predicted_ratings[range(len(-predicted_ratings)), observed_ratings].log().mean()
+
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
         return optimizer
@@ -154,14 +163,14 @@ class OrdRec(pl.LightningModule, Recommender):
     def training_step(self, train_batch, batch_idx):
         users, items, ratings = train_batch
         output = self.forward(users, items)
-        loss = max_prob_loss(output, ratings)
+        loss = self.loss_func(output, ratings)
         self.log('train_loss', loss)
         return loss
 
     def validation_step(self, val_batch, batch_idx):
         users, items, ratings = val_batch
         output = self.forward(users, items)
-        loss = max_prob_loss(output, ratings)
+        loss = self.loss_func(output, ratings)
         self.log('val_loss', loss)
 
     def predict(self, user_id, return_distribution=False):
@@ -205,27 +214,32 @@ class ImplicitFactorizationModel(pl.LightningModule, Recommender):
         item_embedding = self.item_embeddings(item_ids)
         dot = (user_embedding * item_embedding).sum(1)
         return dot
+    
+    def loss_func(self, predicted_ratings, predicted_negative):
+        positive = (1.0 - torch.sigmoid(predicted_ratings))
+        negative = torch.sigmoid(predicted_negative)
+        return torch.cat((positive, negative)).mean()
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
         return optimizer
 
     def get_negative_prediction(self, users):
-        sampled_items = torch.randint(0, self.num_items, (len(users),))
+        sampled_items = torch.randint(0, self.num_items, (len(users),), device=self.device)
         negative_prediction = self.forward(users, sampled_items)
         return negative_prediction
 
     def training_step(self, train_batch, batch_idx):
         users, items = train_batch
         output = self.forward(users, items)
-        loss = funk_svd_loss(output, predicted_negative=self.get_negative_prediction(users))
+        loss = self.loss_func(output, predicted_negative=self.get_negative_prediction(users))
         self.log('train_loss', loss)
         return loss
 
     def validation_step(self, val_batch, batch_idx):
         users, items = val_batch
         output = self.forward(users, items)
-        loss = funk_svd_loss(output, predicted_negative=self.get_negative_prediction(users))
+        loss = self.loss_func(output, predicted_negative=self.get_negative_prediction(users))
         self.log('val_loss', loss)
 
     def predict(self, user_id):
@@ -265,27 +279,34 @@ class ImplicitCPMF(pl.LightningModule, Recommender):
         item_gamma = self.item_gammas(item_ids)
         var = self.var_activation(user_gamma + item_gamma)
         return dot, var
+    
+    def loss_func(self, predicted_ratings, predicted_negative):
+        mean, variance = predicted_ratings
+        positive = (((1.0 - mean) ** 2) / variance).mean() + torch.log(variance).mean()
+        mean, variance = predicted_negative
+        negative = ((mean ** 2) / variance).mean() + torch.log(variance).mean()
+        return (positive + negative) / 2
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
         return optimizer
 
     def get_negative_prediction(self, users):
-        sampled_items = torch.randint(0, self.num_items, (len(users),))
+        sampled_items = torch.randint(0, self.num_items, (len(users),), device=self.device)
         negative_prediction = self.forward(users, sampled_items)
         return negative_prediction
 
     def training_step(self, train_batch, batch_idx):
         users, items = train_batch
         output = self.forward(users, items)
-        loss = cpmf_loss(output, predicted_negative=self.get_negative_prediction(users))
+        loss = self.loss_func(output, predicted_negative=self.get_negative_prediction(users))
         self.log('train_loss', loss)
         return loss
 
     def validation_step(self, val_batch, batch_idx):
         users, items = val_batch
         output = self.forward(users, items)
-        loss = cpmf_loss(output, predicted_negative=self.get_negative_prediction(users))
+        loss = self.loss_func(output, predicted_negative=self.get_negative_prediction(users))
         self.log('val_loss', loss)
 
     def predict(self, user_id):

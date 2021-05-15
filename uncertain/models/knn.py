@@ -15,7 +15,7 @@ class ItemKNN(Recommender):
         relevance = torch.empty(len(self.item_similarities))
         for idx, item in enumerate(self.item_similarities):
             if idx in user_profile:
-                relevance[idx] = -np.inf
+                relevance[idx] = -float('inf')
             else:
                 relevance[idx] = torch.sum(item[user_profile][:self.k])
 
