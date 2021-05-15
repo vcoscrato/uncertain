@@ -1,8 +1,8 @@
 import numpy as np
-from .base import Recommendations
+from uncertain.models.base import Recommender
 
 
-class ItemKNN(object):
+class ItemKNN(Recommender):
 
     def __init__(self, item_similarities, k=10, weighted=True):
 
@@ -10,7 +10,7 @@ class ItemKNN(object):
         self.k = k
         self.weighted = weighted
 
-    def recommend(self, user_profile):
+    def predict(self, user_profile):
 
         relevance = np.empty(len(self.item_similarities))
         for idx, item in enumerate(self.item_similarities):
@@ -19,4 +19,4 @@ class ItemKNN(object):
             else:
                 relevance[idx] = np.sum(item[user_profile][:self.k])
 
-        return Recommendations(user='', items=relevance.argsort()[-10:])
+        return relevance

@@ -1,72 +1,23 @@
-"""
-Module with functionality for splitting and shuffling datasets.
-"""
-
 import torch
 import numpy as np
 from uncertain.data_structures import Interactions
 from copy import deepcopy as dc
 
 
-def random_train_test_split(data, test_percentage=0.2, random_state=None):
-    """
-    Randomly split interactions between training and testing.
+def random_train_test_split(interactions, test_percentage=0.2, seed=0):
 
-    Parameters
-    ----------
+    interactions.shuffle(seed)
+    cutoff = int((1.0 - test_percentage) * len(interactions))
 
-    data: :class:`uncertain.data_structures.Interactions`
-        The interactions to split.
-    test_percentage: float, optional
-        The fraction of interactions to place in the test set.
-
-    Returns
-    -------
-
-    (train, test): (:class:`uncertain.interactions.Interactions`,
-                    :class:`uncertain.interactions.Interactions`)
-         A tuple of (train data, test data)
-    """
-
-    user_labels = data.user_labels
-    item_labels = data.item_labels
-
-    cutoff = int((1.0 - test_percentage) * len(data))
-
-    u, i, s = data[:cutoff]
-    train = Interactions(u, i, s, user_labels=user_labels, item_labels=item_labels)
-    u, i, s = data[cutoff:]
-    test = Interactions(u, i, s, user_labels=user_labels, item_labels=item_labels)
+    u, i, s = interactions[:cutoff]
+    train = Interactions(u, i, s, **interactions.pass_args())
+    u, i, s = interactions[cutoff:]
+    test = Interactions(u, i, s, **interactions.pass_args())
 
     return train, test
 
 
-def user_based_split(data, test_percentage=0.2, min_profile_length=2, seed=None):
-    """
-    Split interactions between training and testing, guarantee
-    that each user have a 'test_percentage' fraction of ratings
-    in the test set. If timestamps are provided, the latest
-    ratings are placed in the test set.
-
-    Parameters
-    ----------
-
-    data: :class:`uncertain.data_structures.Interactions`
-        The interactions to split.
-    test_percentage: float
-        The fraction of interactions to place in the test set.
-    min_profile_length: int
-        The minimum profile length for a user to be considered when testing.
-    seed: int
-        Seed to pass to RNG. Ignored if timestamps are provided.
-
-    Returns
-    -------
-
-    (train, test): (:class:`uncertain.interactions.Interactions`,
-                    :class:`uncertain.interactions.Interactions`)
-         A tuple of (train data, test data)
-    """
+def user_based_split(interactions, test_percentage=0.2, min_profile_length=2, seed=None):
 
     train_idx = []
     test_idx = []
@@ -74,16 +25,16 @@ def user_based_split(data, test_percentage=0.2, min_profile_length=2, seed=None)
     if seed is not None:
         torch.manual_seed(seed)
 
-    for u in range(data.num_users):
+    for u in range(interactions.num_users):
 
-        idx = torch.where(data.users == u)[0]
+        idx = torch.where(interactions.users == u)[0]
 
         if len(idx) < min_profile_length:
             train_idx.append(idx)
             continue
 
-        if hasattr(data, 'timestamps'):
-            idx = idx[data.timestamps[idx].argsort()]
+        if hasattr(interactions, 'timestamps'):
+            idx = idx[interactions.timestamps[idx].argsort()]
         else:
             idx = idx[torch.randperm(len(idx), device=idx.device)]
 
@@ -92,9 +43,9 @@ def user_based_split(data, test_percentage=0.2, min_profile_length=2, seed=None)
         train_idx.append(idx[:cutoff])
         test_idx.append(idx[cutoff:])
 
-    u, i, s = data[torch.cat(train_idx)]
-    train = Interactions(u, i, s, **data.pass_args())
-    u, i, s = data[torch.cat(test_idx)]
-    test = Interactions(u, i, s, **data.pass_args())
+    u, i, s = interactions[torch.cat(train_idx)]
+    train = Interactions(u, i, s, **interactions.pass_args())
+    u, i, s = interactions[torch.cat(test_idx)]
+    test = Interactions(u, i, s, **interactions.pass_args())
 
     return train, test
