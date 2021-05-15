@@ -79,6 +79,10 @@ class ExplicitCPMF(pl.LightningModule, Recommender):
         self.batch_size = batch_size
         self.weight_decay = weight_decay
 
+    @property
+    def is_uncertain(self):
+        return True
+
     def forward(self, user_ids, item_ids):
         user_embedding = self.user_embeddings(user_ids)
         item_embedding = self.item_embeddings(item_ids)
@@ -140,6 +144,10 @@ class OrdRec(pl.LightningModule, Recommender):
         self.lr = lr
         self.batch_size = batch_size
         self.weight_decay = weight_decay
+
+    @property
+    def is_uncertain(self):
+        return True
 
     def forward(self, user_ids, item_ids):
         user_embedding = self.user_embeddings(user_ids)
@@ -270,6 +278,10 @@ class ImplicitCPMF(pl.LightningModule, Recommender):
         self.lr = lr
         self.batch_size = batch_size
         self.weight_decay = weight_decay
+
+    @property
+    def is_uncertain(self):
+        return True
 
     def forward(self, user_ids, item_ids):
         user_embedding = self.user_embeddings(user_ids)
