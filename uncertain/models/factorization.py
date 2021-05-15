@@ -31,7 +31,7 @@ class ExplicitFactorizationModel(pl.LightningModule, Recommender):
         return optimizer
 
     def get_negative_prediction(self, users):
-        sampled_items = torch.randint(0, self.self.num_items, (len(users),))
+        sampled_items = torch.randint(0, self.num_items, (len(users),))
         negative_prediction = self.forward(users, sampled_items)
         return negative_prediction
 
@@ -50,7 +50,7 @@ class ExplicitFactorizationModel(pl.LightningModule, Recommender):
 
     def predict(self, user_id):
         with torch.no_grad():
-            item_ids = torch.arange(self.self.num_items, device=self.device)
+            item_ids = torch.arange(self.num_items, device=self.device)
             user_ids = torch.full_like(item_ids, user_id)
             return self.forward(user_ids, item_ids)
 
@@ -58,7 +58,7 @@ class ExplicitFactorizationModel(pl.LightningModule, Recommender):
         with torch.no_grad():
             item_var = self.item_embeddings(torch.tensor(item_id, device=self.device))
             if candidate_ids is None:
-                candidate_ids = torch.arange(self.self.num_items, device=self.device)
+                candidate_ids = torch.arange(self.num_items, device=self.device)
             candidates_var = self.item_embeddings(candidate_ids)
             return torch.cosine_similarity(item_var, candidates_var, dim=-1)
 
@@ -91,7 +91,7 @@ class ExplicitCPMF(pl.LightningModule, Recommender):
         return optimizer
 
     def get_negative_prediction(self, users):
-        sampled_items = torch.randint(0, self.self.num_items, (len(users),))
+        sampled_items = torch.randint(0, self.num_items, (len(users),))
         negative_prediction = self.forward(users, sampled_items)
         return negative_prediction
 
@@ -110,7 +110,7 @@ class ExplicitCPMF(pl.LightningModule, Recommender):
 
     def predict(self, user_id):
         with torch.no_grad():
-            item_ids = torch.arange(self.self.num_items, device=self.device)
+            item_ids = torch.arange(self.num_items, device=self.device)
             user_ids = torch.full_like(item_ids, user_id)
             return self.forward(user_ids, item_ids)
 
@@ -118,7 +118,7 @@ class ExplicitCPMF(pl.LightningModule, Recommender):
         with torch.no_grad():
             item_var = self.item_embeddings(torch.tensor(item_id, device=self.device))
             if candidate_ids is None:
-                candidate_ids = torch.arange(self.self.num_items, device=self.device)
+                candidate_ids = torch.arange(self.num_items, device=self.device)
             candidates_var = self.item_embeddings(candidate_ids)
             return torch.cosine_similarity(item_var, candidates_var, dim=-1)
 
@@ -166,7 +166,7 @@ class OrdRec(pl.LightningModule, Recommender):
 
     def predict(self, user_id, return_distribution=False):
         with torch.no_grad():
-            item_ids = torch.arange(self.self.num_items, device=self.device)
+            item_ids = torch.arange(self.num_items, device=self.device)
             user_ids = torch.full_like(item_ids, user_id)
             distribution = self.forward(user_ids, item_ids)
             if return_distribution:
@@ -180,7 +180,7 @@ class OrdRec(pl.LightningModule, Recommender):
         with torch.no_grad():
             item_var = self.item_embeddings(torch.tensor(item_id, device=self.device))
             if candidate_ids is None:
-                candidate_ids = torch.arange(self.self.num_items, device=self.device)
+                candidate_ids = torch.arange(self.num_items, device=self.device)
             candidates_var = self.item_embeddings(candidate_ids)
             return torch.cosine_similarity(item_var, candidates_var, dim=-1)
 
@@ -211,7 +211,7 @@ class ImplicitFactorizationModel(pl.LightningModule, Recommender):
         return optimizer
 
     def get_negative_prediction(self, users):
-        sampled_items = torch.randint(0, self.self.num_items, (len(users),))
+        sampled_items = torch.randint(0, self.num_items, (len(users),))
         negative_prediction = self.forward(users, sampled_items)
         return negative_prediction
 
@@ -230,7 +230,7 @@ class ImplicitFactorizationModel(pl.LightningModule, Recommender):
 
     def predict(self, user_id):
         with torch.no_grad():
-            item_ids = torch.arange(self.self.num_items, device=self.device)
+            item_ids = torch.arange(self.num_items, device=self.device)
             user_ids = torch.full_like(item_ids, user_id)
             return self.forward(user_ids, item_ids)
 
@@ -238,7 +238,7 @@ class ImplicitFactorizationModel(pl.LightningModule, Recommender):
         with torch.no_grad():
             item_var = self.item_embeddings(torch.tensor(item_id, device=self.device))
             if candidate_ids is None:
-                candidate_ids = torch.arange(self.self.num_items, device=self.device)
+                candidate_ids = torch.arange(self.num_items, device=self.device)
             candidates_var = self.item_embeddings(candidate_ids)
             return torch.cosine_similarity(item_var, candidates_var, dim=-1)
 
@@ -271,26 +271,26 @@ class ImplicitCPMF(pl.LightningModule, Recommender):
         return optimizer
 
     def get_negative_prediction(self, users):
-        sampled_items = torch.randint(0, self.self.num_items, (len(users),))
+        sampled_items = torch.randint(0, self.num_items, (len(users),))
         negative_prediction = self.forward(users, sampled_items)
         return negative_prediction
 
     def training_step(self, train_batch, batch_idx):
-        users, items, ratings = train_batch
+        users, items = train_batch
         output = self.forward(users, items)
         loss = cpmf_loss(output, predicted_negative=self.get_negative_prediction(users))
         self.log('train_loss', loss)
         return loss
 
     def validation_step(self, val_batch, batch_idx):
-        users, items, ratings = val_batch
+        users, items = val_batch
         output = self.forward(users, items)
         loss = cpmf_loss(output, predicted_negative=self.get_negative_prediction(users))
         self.log('val_loss', loss)
 
     def predict(self, user_id):
         with torch.no_grad():
-            item_ids = torch.arange(self.self.num_items, device=self.device)
+            item_ids = torch.arange(self.num_items, device=self.device)
             user_ids = torch.full_like(item_ids, user_id)
             return self.forward(user_ids, item_ids)
 
@@ -298,6 +298,6 @@ class ImplicitCPMF(pl.LightningModule, Recommender):
         with torch.no_grad():
             item_var = self.item_embeddings(torch.tensor(item_id, device=self.device))
             if candidate_ids is None:
-                candidate_ids = torch.arange(self.self.num_items, device=self.device)
+                candidate_ids = torch.arange(self.num_items, device=self.device)
             candidates_var = self.item_embeddings(candidate_ids)
             return torch.cosine_similarity(item_var, candidates_var, dim=-1)
