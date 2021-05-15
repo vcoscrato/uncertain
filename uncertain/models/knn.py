@@ -12,7 +12,7 @@ class ItemKNN(Recommender):
 
     @property
     def is_uncertain(self):
-        return
+        return False
 
     def predict(self, user_profile):
         relevance = torch.empty(len(self.item_similarities))
