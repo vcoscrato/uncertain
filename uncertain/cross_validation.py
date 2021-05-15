@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-from uncertain.data_structures import Interactions
+from uncertain.core import Interactions
 from copy import deepcopy as dc
 
 

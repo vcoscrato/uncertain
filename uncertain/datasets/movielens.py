@@ -12,7 +12,7 @@ import os
 import h5py
 
 from uncertain.datasets import transport
-from uncertain.data_structures import Interactions
+from uncertain.core import Interactions
 
 VARIANTS = ('100K',
             '1M',
@@ -57,7 +57,7 @@ def get_movielens_dataset(variant='100K'):
     Returns
     -------
 
-    Interactions: :class:`uncertain.data_structures.Interactions`
+    Interactions: :class:`uncertain.core.Interactions`
         instance of the interactions class
     """
 

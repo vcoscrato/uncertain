@@ -1,5 +1,5 @@
 import torch
-from uncertain.models.base import Recommender
+from uncertain.core import Recommender
 
 
 class Ensemble(Recommender):

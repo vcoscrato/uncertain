@@ -1,5 +1,5 @@
-import numpy as np
-from uncertain.models.base import Recommender
+import torch
+from uncertain.core import Recommender
 
 
 class ItemKNN(Recommender):
@@ -12,11 +12,11 @@ class ItemKNN(Recommender):
 
     def predict(self, user_profile):
 
-        relevance = np.empty(len(self.item_similarities))
+        relevance = torch.empty(len(self.item_similarities))
         for idx, item in enumerate(self.item_similarities):
             if idx in user_profile:
                 relevance[idx] = -np.inf
             else:
-                relevance[idx] = np.sum(item[user_profile][:self.k])
+                relevance[idx] = torch.sum(item[user_profile][:self.k])
 
         return relevance

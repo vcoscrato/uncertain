@@ -1,5 +1,4 @@
 import torch
-import numpy as np
 import scipy.sparse as sp
 
 
@@ -11,30 +10,6 @@ def make_tensor(x):
 
 
 class Interactions(torch.utils.data.Dataset):
-    """
-    Base data structure for Recommendation Systems.
-
-    Parameters
-    ----------
-    users: tensor of ints
-        The interactions user ids. Should be integers in [0, n_users].
-    items: tensor
-        The interactions item ids. Should be integers in [0, items].
-    scores: tensor
-        For explicit or ordinal feedback feedback: The interaction values. If None, Implicit feedback is assumed.
-    timestamps: tensor
-        The interactions timestamps.
-    n_users: int, optional
-        The number of users. If none, inferred from max(users)+1.
-    n_items: int, optional
-        The number of items. If none, inferred from max(items)+1.
-    user_labels: tensor, optional
-        Tensor of unique identifiers for the users in the dataset. user_labels[u] is the label of the u-th user.
-    item_labels: tensor, optional
-        Tensor of unique identifiers for the items in the dataset. item_labels[i] is the label of the i-th user
-    score_labels: tensor
-        For ordinal feedback only: The ordered score labels.
-    """
 
     def __init__(self, users, items, scores=None, timestamps=None, num_users=None, num_items=None,
                  user_labels=None, item_labels=None, score_labels=None):
@@ -44,7 +19,7 @@ class Interactions(torch.utils.data.Dataset):
         self.num_users = num_users or torch.max(self.users).item() + 1
         if user_labels is not None:
             self.user_labels = list(user_labels)
-            
+
         self.items = make_tensor(items).long()
         assert len(self.items) == len(self.items), 'items and items should have same length'
         self.num_items = num_items or torch.max(self.items).item() + 1
@@ -83,7 +58,7 @@ class Interactions(torch.utils.data.Dataset):
         if hasattr(self, 'scores'):
             return self.users[idx], self.items[idx], self.scores[idx]
         else:
-            return self.users[idx], self.items[idx], None
+            return self.users[idx], self.items[idx]
 
     def shuffle(self, seed=None):
         if seed is not None:
@@ -154,27 +129,12 @@ class Interactions(torch.utils.data.Dataset):
         variances[torch.isnan(variances)] = 0
         return variances
 
+    def dataloader(self, batch_size):
+        return torch.utils.data.DataLoader(self, batch_size=batch_size,
+                                           drop_last=True, shuffle=True, num_workers=torch.get_num_threads())
+
 
 class Recommendations(object):
-    """
-    This object should be used for an easier and better
-    visualization and evaluation of a recommendation list.
-
-    Parameters
-    ----------
-    user: int
-        user identifier
-    items: tensor
-        A tensor containing the recommended item ids.
-    user_label: str
-
-    item_labels: tensor
-        The labels of the recommended items.
-    uncertainties: tensor
-        The estimated uncertainty for each of the
-        recommended items.
-
-    """
 
     def __init__(self, user, items, user_label=None, item_labels=None, uncertainties=None):
 
@@ -200,3 +160,40 @@ class Recommendations(object):
             s += '.\n'
 
         return s
+
+
+class Recommender(object):
+
+    def pass_args(self, interactions):
+        for key, value in interactions.pass_args().items():
+            setattr(self, key, value)
+
+    def recommend(self, user, remove_items=None, top=10):
+
+        if isinstance(user, str):
+            user = self.user_labels.index(user)
+
+        predictions = self.predict(user)
+
+        if not self.is_uncertain:
+            predictions = predictions
+        else:
+            uncertainties = predictions[1]
+            predictions = predictions[0]
+
+        if remove_items is not None:
+            predictions[remove_items] = -float('inf')
+            ranking = predictions.argsort(descending=True)[:-len(remove_items)][:top]
+        else:
+            ranking = predictions.argsort(descending=True)[:top]
+
+        kwargs = {'user': user, 'items': ranking}
+        if self.is_uncertain:
+            kwargs['uncertainties'] = uncertainties[ranking]
+
+        if hasattr(self, 'user_labels'):
+            kwargs['user_label'] = self.user_labels[user]
+        if hasattr(self, 'item_labels'):
+            kwargs['item_labels'] = [self.item_labels[i] for i in ranking.cpu().tolist()]
+
+        return Recommendations(**kwargs)

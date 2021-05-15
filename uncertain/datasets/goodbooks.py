@@ -12,7 +12,7 @@ import h5py
 import numpy as np
 
 from uncertain.datasets import transport
-from uncertain.data_structures import ExplicitInteractions
+from uncertain.core import ExplicitInteractions
 
 
 def _get_dataset():
@@ -36,7 +36,7 @@ def get_goodbooks_dataset():
     Returns
     -------
 
-    Interactions: :class:`uncertain.data_structures.Interactions`
+    Interactions: :class:`uncertain.core.Interactions`
         instance of the interactions class
 
     References

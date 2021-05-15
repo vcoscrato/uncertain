@@ -1,1 +1,1 @@
-from .data_structures import Interactions
+from .core import Interactions

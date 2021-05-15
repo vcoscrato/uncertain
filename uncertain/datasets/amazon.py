@@ -7,7 +7,7 @@ import h5py
 import numpy as np
 
 from uncertain.datasets import transport
-from uncertain.data_structures import ExplicitInteractions
+from uncertain.core import ExplicitInteractions
 
 
 def _download_amazon():
