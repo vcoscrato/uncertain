@@ -2,7 +2,7 @@ from setuptools import find_packages, setup
 
 setup(
     name='uncertain',
-    version='0.8.3',
+    version='0.9.0',
     packages=find_packages(),
     install_requires=['torch>=1.7.0', 'numpy', 'scipy', 'pytorch-lightning'],
     license='MIT',

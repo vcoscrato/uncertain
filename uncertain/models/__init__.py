@@ -1,3 +1,3 @@
-from .factorization import FunkSVD, LogMF, CPMF, ImplicitCPMF, OrdRec
+from .factorization import FunkSVD, ImplicitMF, CPMF, OrdRec, GMF, GaussianGMF
 from .extras import Ensemble, UncertainWrapper, ItemPopularity, UserProfileLength, ItemVariance
 from .knn import ItemKNN

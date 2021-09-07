@@ -2,40 +2,49 @@ import torch
 import pytorch_lightning as pl
 from uncertain.core import Recommender
 from uncertain.layers import ZeroEmbedding, ScaledEmbedding
+from uncertain.losses import mse_loss, gaussian_loss, max_prob_loss, cross_entropy_loss, bpr_loss
 
 
-class FunkSVD(pl.LightningModule, Recommender):
+class FactorizationModel(pl.LightningModule, Recommender):
 
     def __init__(self, interactions, embedding_dim, lr, batch_size, weight_decay):
         super().__init__()
         self.pass_args(interactions)
+
         self.user_embeddings = ScaledEmbedding(self.num_users, embedding_dim)
         self.item_embeddings = ScaledEmbedding(self.num_items, embedding_dim)
+
         self.lr = lr
         self.batch_size = batch_size
         self.weight_decay = weight_decay
-
-    @property
-    def is_uncertain(self):
-        return False
-
-    def forward(self, user_ids, item_ids):
-        user_embedding = self.user_embeddings(user_ids)
-        item_embedding = self.item_embeddings(item_ids)
-        dot = (user_embedding * item_embedding).sum(1)
-        return dot
-
-    def loss_func(self, predicted_ratings, observed_ratings):
-        return ((observed_ratings - predicted_ratings) ** 2).mean()
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
         return optimizer
 
-    def get_negative_prediction(self, users):
-        sampled_items = torch.randint(0, self.num_items, (len(users),))
-        negative_prediction = self.forward(users, sampled_items)
-        return negative_prediction
+    def predict(self, user_id):
+        item_ids = torch.arange(self.num_items)
+        user_ids = torch.full_like(item_ids, user_id)
+        return self(user_ids, item_ids)
+
+    def get_user_similarity(self, users, candidates=None):
+        users_var = self.user_embeddings(users)
+        if candidates is None:
+            candidates_var = self.user_embeddings.weight
+        else:
+            candidates_var = self.user_embeddings(candidates)
+        return torch.cosine_similarity(users_var, candidates_var, dim=-1)
+
+    def get_item_similarity(self, items, candidates=None):
+        items_var = self.item_embeddings(items)
+        if candidates is None:
+            candidates_var = self.item_embeddings.weight
+        else:
+            candidates_var = self.item_embeddings(candidates)
+        return torch.cosine_similarity(items_var, candidates_var, dim=-1)
+
+
+class Explicit(object):
 
     def training_step(self, train_batch, batch_idx):
         users, items, ratings = train_batch
@@ -50,34 +59,53 @@ class FunkSVD(pl.LightningModule, Recommender):
         loss = self.loss_func(output, ratings)
         self.log('val_loss', loss)
 
-    def predict(self, user_id):
-        with torch.no_grad():
-            item_ids = torch.arange(self.num_items, device=self.device)
-            user_ids = torch.full_like(item_ids, user_id)
-            return self.forward(user_ids, item_ids)
 
-    def get_item_similarity(self, item_id, candidate_ids=None):
-        with torch.no_grad():
-            item_var = self.item_embeddings(torch.tensor(item_id, device=self.device))
-            if candidate_ids is None:
-                candidate_ids = torch.arange(self.num_items, device=self.device)
-            candidates_var = self.item_embeddings(candidate_ids)
-            return torch.cosine_similarity(item_var, candidates_var, dim=-1)
+class Implicit(object):
+    
+    def get_negative_prediction(self, users):
+        sampled_items = torch.randint(0, self.num_items, (len(users),), device=self.device)
+        negative_prediction = self.forward(users, sampled_items)
+        return negative_prediction
+
+    def training_step(self, train_batch, batch_idx):
+        users, items = train_batch
+        output = self.forward(users, items)
+        loss = self.loss_func(output, self.get_negative_prediction(users))
+        self.log('train_loss', loss)
+        return loss
+
+    def validation_step(self, val_batch, batch_idx):
+        users, items = val_batch
+        output = self.forward(users, items)
+        loss = self.loss_func(output, self.get_negative_prediction(users))
+        self.log('val_loss', loss)
 
 
-class CPMF(pl.LightningModule, Recommender):
+class FunkSVD(Explicit, FactorizationModel):
 
     def __init__(self, interactions, embedding_dim, lr, batch_size, weight_decay):
-        super().__init__()
-        self.pass_args(interactions)
-        self.user_embeddings = ScaledEmbedding(self.num_users, embedding_dim)
-        self.item_embeddings = ScaledEmbedding(self.num_items, embedding_dim)
+        super().__init__(interactions, embedding_dim, lr, batch_size, weight_decay)
+        self.loss_func = mse_loss
+
+    @property
+    def is_uncertain(self):
+        return False
+
+    def forward(self, user_ids, item_ids):
+        user_embedding = self.user_embeddings(user_ids)
+        item_embedding = self.item_embeddings(item_ids)
+        dot = (user_embedding * item_embedding).sum(1)
+        return dot
+
+
+class CPMF(Explicit, FactorizationModel):
+
+    def __init__(self, interactions, embedding_dim, lr, batch_size, weight_decay):
+        super().__init__(interactions, embedding_dim, lr, batch_size, weight_decay)
+        self.loss_func = gaussian_loss
         self.user_gammas = ScaledEmbedding(self.num_users, 1)
         self.item_gammas = ScaledEmbedding(self.num_items, 1)
         self.var_activation = torch.nn.Softplus()
-        self.lr = lr
-        self.batch_size = batch_size
-        self.weight_decay = weight_decay
 
     @property
     def is_uncertain(self):
@@ -92,58 +120,13 @@ class CPMF(pl.LightningModule, Recommender):
         var = self.var_activation(user_gamma + item_gamma)
         return dot, var
 
-    def loss_func(self, predicted_ratings, observed_ratings):
-        mean, variance = predicted_ratings
-        return (((observed_ratings - mean) ** 2) / variance).mean() + torch.log(variance).mean()
 
-    def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
-        return optimizer
-
-    def get_negative_prediction(self, users):
-        sampled_items = torch.randint(0, self.num_items, (len(users),))
-        negative_prediction = self.forward(users, sampled_items)
-        return negative_prediction
-
-    def training_step(self, train_batch, batch_idx):
-        users, items, ratings = train_batch
-        output = self.forward(users, items)
-        loss = self.loss_func(output, ratings)
-        self.log('train_loss', loss)
-        return loss
-
-    def validation_step(self, val_batch, batch_idx):
-        users, items, ratings = val_batch
-        output = self.forward(users, items)
-        loss = self.loss_func(output, ratings)
-        self.log('val_loss', loss)
-
-    def predict(self, user_id):
-        with torch.no_grad():
-            item_ids = torch.arange(self.num_items, device=self.device)
-            user_ids = torch.full_like(item_ids, user_id)
-            return self.forward(user_ids, item_ids)
-
-    def get_item_similarity(self, item_id, candidate_ids=None):
-        with torch.no_grad():
-            item_var = self.item_embeddings(torch.tensor(item_id, device=self.device))
-            if candidate_ids is None:
-                candidate_ids = torch.arange(self.num_items, device=self.device)
-            candidates_var = self.item_embeddings(candidate_ids)
-            return torch.cosine_similarity(item_var, candidates_var, dim=-1)
-
-
-class OrdRec(pl.LightningModule, Recommender):
+class OrdRec(Explicit, FactorizationModel):
 
     def __init__(self, interactions, embedding_dim, lr, batch_size, weight_decay):
-        super().__init__()
-        self.pass_args(interactions)
-        self.user_embeddings = ScaledEmbedding(self.num_users, embedding_dim)
-        self.item_embeddings = ScaledEmbedding(self.num_items, embedding_dim)
+        super().__init__(interactions, embedding_dim, lr, batch_size, weight_decay)
+        self.loss_func = max_prob_loss
         self.user_betas = ZeroEmbedding(self.num_users, len(self.score_labels) - 1)
-        self.lr = lr
-        self.batch_size = batch_size
-        self.weight_decay = weight_decay
 
     @property
     def is_uncertain(self):
@@ -161,57 +144,28 @@ class OrdRec(pl.LightningModule, Recommender):
         user_distribution[:, 1:] -= user_distribution[:, :-1].clone()
         return user_distribution
 
-    def loss_func(self, predicted_ratings, observed_ratings):
-        return -predicted_ratings[range(len(-predicted_ratings)), observed_ratings].log().mean()
-
-    def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
-        return optimizer
-
-    def training_step(self, train_batch, batch_idx):
-        users, items, ratings = train_batch
-        output = self.forward(users, items)
-        loss = self.loss_func(output, ratings)
-        self.log('train_loss', loss)
-        return loss
-
-    def validation_step(self, val_batch, batch_idx):
-        users, items, ratings = val_batch
-        output = self.forward(users, items)
-        loss = self.loss_func(output, ratings)
-        self.log('val_loss', loss)
-
     def predict(self, user_id, return_distribution=False):
-        with torch.no_grad():
-            item_ids = torch.arange(self.num_items, device=self.device)
-            user_ids = torch.full_like(item_ids, user_id)
-            distribution = self.forward(user_ids, item_ids)
-            if return_distribution:
-                return distribution
-            else:
-                mean = (distribution * self.score_labels).sum(1)
-                var = ((distribution * self.score_labels ** 2).sum(1) - mean ** 2).abs()
-                return mean, var
-
-    def get_item_similarity(self, item_id, candidate_ids=None):
-        with torch.no_grad():
-            item_var = self.item_embeddings(torch.tensor(item_id, device=self.device))
-            if candidate_ids is None:
-                candidate_ids = torch.arange(self.num_items, device=self.device)
-            candidates_var = self.item_embeddings(candidate_ids)
-            return torch.cosine_similarity(item_var, candidates_var, dim=-1)
+        item_ids = torch.arange(self.num_items, device=self.device)
+        user_ids = torch.full_like(item_ids, user_id)
+        distribution = self.forward(user_ids, item_ids)
+        if return_distribution:
+            return distribution
+        else:
+            mean = (distribution * self.score_labels).sum(1)
+            var = ((distribution * self.score_labels ** 2).sum(1) - mean ** 2).abs()
+            return mean, var
 
 
-class logMF(pl.LightningModule, Recommender):
+class ImplicitMF(Implicit, FactorizationModel):
 
-    def __init__(self, interactions, embedding_dim, lr, batch_size, weight_decay):
-        super().__init__()
-        self.pass_args(interactions)
-        self.user_embeddings = ScaledEmbedding(self.num_users, embedding_dim)
-        self.item_embeddings = ScaledEmbedding(self.num_items, embedding_dim)
-        self.lr = lr
-        self.batch_size = batch_size
-        self.weight_decay = weight_decay
+    def __init__(self, interactions, embedding_dim, lr, batch_size, weight_decay, loss='bpr'):
+        super().__init__(interactions, embedding_dim, lr, batch_size, weight_decay)
+        if loss == 'bpr':
+            self.loss_func = bpr_loss
+        elif loss == 'cross_entropy':
+            self.loss_func = cross_entropy_loss
+        else:
+            raise AttributeError('loss should be one of ["bpr", "cross_entropy"].')
 
     @property
     def is_uncertain(self):
@@ -221,60 +175,16 @@ class logMF(pl.LightningModule, Recommender):
         user_embedding = self.user_embeddings(user_ids)
         item_embedding = self.item_embeddings(item_ids)
         dot = (user_embedding * item_embedding).sum(1)
-        return dot
-    
-    def loss_func(self, positive, negative):
-        positive = torch.log(torch.sigmoid(positive))
-        negative = torch.log(1 - torch.sigmoid(negative))
-        return - torch.cat((positive, negative)).mean()
-
-    def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
-        return optimizer
-
-    def get_negative_prediction(self, users):
-        sampled_items = torch.randint(0, self.num_items, (len(users),), device=self.device)
-        negative_prediction = self.forward(users, sampled_items)
-        return negative_prediction
-
-    def training_step(self, train_batch, batch_idx):
-        users, items = train_batch
-        output = self.forward(users, items)
-        loss = self.loss_func(output, self.get_negative_prediction(users))
-        self.log('train_loss', loss)
-        return loss
-
-    def validation_step(self, val_batch, batch_idx):
-        users, items = val_batch
-        output = self.forward(users, items)
-        loss = self.loss_func(output, self.get_negative_prediction(users))
-        self.log('val_loss', loss)
-
-    def predict(self, user_id):
-        with torch.no_grad():
-            item_ids = torch.arange(self.num_items, device=self.device)
-            user_ids = torch.full_like(item_ids, user_id)
-            return self.forward(user_ids, item_ids)
-
-    def get_item_similarity(self, item_id, candidate_ids=None):
-        with torch.no_grad():
-            item_var = self.item_embeddings(torch.tensor(item_id, device=self.device))
-            if candidate_ids is None:
-                candidate_ids = torch.arange(self.num_items, device=self.device)
-            candidates_var = self.item_embeddings(candidate_ids)
-            return torch.cosine_similarity(item_var, candidates_var, dim=-1)
+        return torch.sigmoid(dot)
 
 
-class bprMF(pl.LightningModule, Recommender):
+class GMF(Explicit, FactorizationModel):
 
     def __init__(self, interactions, embedding_dim, lr, batch_size, weight_decay):
-        super().__init__()
-        self.pass_args(interactions)
-        self.user_embeddings = ScaledEmbedding(self.num_users, embedding_dim)
-        self.item_embeddings = ScaledEmbedding(self.num_items, embedding_dim)
-        self.lr = lr
-        self.batch_size = batch_size
-        self.weight_decay = weight_decay
+        super().__init__(interactions, embedding_dim, lr, batch_size, weight_decay)
+        self.linear = torch.nn.Linear(embedding_dim, 1, bias=False)
+        torch.nn.init.normal_(self.linear.weight, mean=0, std=0.01)
+        self.loss_func = mse_loss
 
     @property
     def is_uncertain(self):
@@ -283,62 +193,18 @@ class bprMF(pl.LightningModule, Recommender):
     def forward(self, user_ids, item_ids):
         user_embedding = self.user_embeddings(user_ids)
         item_embedding = self.item_embeddings(item_ids)
-        dot = (user_embedding * item_embedding).sum(1)
-        return dot
-
-    def loss_func(self, positive, negative):
-        return - torch.log(positive - negative).mean()
-
-    def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
-        return optimizer
-
-    def get_negative_prediction(self, users):
-        sampled_items = torch.randint(0, self.num_items, (len(users),), device=self.device)
-        negative_prediction = self.forward(users, sampled_items)
-        return negative_prediction
-
-    def training_step(self, train_batch, batch_idx):
-        users, items = train_batch
-        output = self.forward(users, items)
-        loss = self.loss_func(output, self.get_negative_prediction(users))
-        self.log('train_loss', loss)
-        return loss
-
-    def validation_step(self, val_batch, batch_idx):
-        users, items = val_batch
-        output = self.forward(users, items)
-        loss = self.loss_func(output, self.get_negative_prediction(users))
-        self.log('val_loss', loss)
-
-    def predict(self, user_id):
-        with torch.no_grad():
-            item_ids = torch.arange(self.num_items, device=self.device)
-            user_ids = torch.full_like(item_ids, user_id)
-            return self.forward(user_ids, item_ids)
-
-    def get_item_similarity(self, item_id, candidate_ids=None):
-        with torch.no_grad():
-            item_var = self.item_embeddings(torch.tensor(item_id, device=self.device))
-            if candidate_ids is None:
-                candidate_ids = torch.arange(self.num_items, device=self.device)
-            candidates_var = self.item_embeddings(candidate_ids)
-            return torch.cosine_similarity(item_var, candidates_var, dim=-1)
+        dot = user_embedding * item_embedding
+        return self.linear(dot).flatten()
 
 
-class ImplicitCPMF(pl.LightningModule, Recommender):
+class GaussianGMF(Explicit, FactorizationModel):
 
     def __init__(self, interactions, embedding_dim, lr, batch_size, weight_decay):
-        super().__init__()
-        self.pass_args(interactions)
-        self.user_embeddings = ScaledEmbedding(self.num_users, embedding_dim)
-        self.item_embeddings = ScaledEmbedding(self.num_items, embedding_dim)
-        self.user_gammas = ScaledEmbedding(self.num_users, 1)
-        self.item_gammas = ScaledEmbedding(self.num_items, 1)
+        super().__init__(interactions, embedding_dim, lr, batch_size, weight_decay)
         self.var_activation = torch.nn.Softplus()
-        self.lr = lr
-        self.batch_size = batch_size
-        self.weight_decay = weight_decay
+        self.linear = torch.nn.Linear(embedding_dim, 2, bias=False)
+        torch.nn.init.normal_(self.linear.weight, mean=0, std=0.01)
+        self.loss_func = gaussian_loss
 
     @property
     def is_uncertain(self):
@@ -347,53 +213,5 @@ class ImplicitCPMF(pl.LightningModule, Recommender):
     def forward(self, user_ids, item_ids):
         user_embedding = self.user_embeddings(user_ids)
         item_embedding = self.item_embeddings(item_ids)
-        dot = (user_embedding * item_embedding).sum(1)
-        user_gamma = self.user_gammas(user_ids)
-        item_gamma = self.item_gammas(item_ids)
-        var = self.var_activation(user_gamma + item_gamma)
-        return dot, var
-    
-    def loss_func(self, positive, negative):
-        mean, variance = positive
-        positive = (((1.0 - mean) ** 2) / variance).mean() + torch.log(variance).mean()
-        mean, variance = negative
-        negative = ((mean ** 2) / variance).mean() + torch.log(variance).mean()
-        return (positive + negative) / 2
-
-    def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
-        return optimizer
-
-    def get_negative_prediction(self, users):
-        sampled_items = torch.randint(0, self.num_items, (len(users),), device=self.device)
-        negative_prediction = self.forward(users, sampled_items)
-        return negative_prediction
-
-    def training_step(self, train_batch, batch_idx):
-        users, items = train_batch
-        output = self.forward(users, items)
-        loss = self.loss_func(output, self.get_negative_prediction(users))
-        self.log('train_loss', loss)
-        return loss
-
-    def validation_step(self, val_batch, batch_idx):
-        users, items = val_batch
-        output = self.forward(users, items)
-        loss = self.loss_func(output, self.get_negative_prediction(users))
-        self.log('val_loss', loss)
-
-    def predict(self, user_id):
-        with torch.no_grad():
-            item_ids = torch.arange(self.num_items, device=self.device)
-            user_ids = torch.full_like(item_ids, user_id)
-            return self.forward(user_ids, item_ids)
-
-    def get_item_similarity(self, item_id, candidate_ids=None):
-        with torch.no_grad():
-            item_var = self.item_embeddings(torch.tensor(item_id, device=self.device))
-            if candidate_ids is None:
-                candidate_ids = torch.arange(self.num_items, device=self.device)
-            candidates_var = self.item_embeddings(candidate_ids)
-            return torch.cosine_similarity(item_var, candidates_var, dim=-1)
-
-
+        dot = self.linear(user_embedding * item_embedding)
+        return dot[:, 0], self.var_activation(dot[:, 1])
