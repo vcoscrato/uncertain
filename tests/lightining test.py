@@ -1,5 +1,3 @@
-import optuna
-import pandas as pd
 import torch
 from uncertain.models import FunkSVD, CPMF, OrdRec, GMF, GaussianGMF
 from uncertain.datasets.movielens import get_movielens_dataset
@@ -7,64 +5,71 @@ from uncertain.datasets.movielens import get_movielens_dataset
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 
-# TODO: Evaluation (maybe test_step?)
+import pandas as pd
+from matplotlib import pyplot as plt
+from matplotlib.colors import BASE_COLORS
 
-ML = get_movielens_dataset(variant='100K')
-train, test = ML.split(test_percentage=0.2, seed=0)
-test, val = test.split(test_percentage=0.5, seed=0)
+ML = get_movielens_dataset(variant='1M')
+train_val, test = ML.split(test_percentage=0.1, seed=0)
+train, val = train_val.split(test_percentage=0.1, seed=0)
 
-funk_svd = FunkSVD(interactions=train, embedding_dim=50, lr=1e-3, batch_size=512, weight_decay=0)
-es = EarlyStopping(monitor='val_loss', min_delta=0.00, patience=3, verbose=False, mode='min')
-trainer = Trainer(gpus=1, max_epochs=200, logger=False, callbacks=es)
-trainer.fit(funk_svd, train_dataloader=train.dataloader(512), val_dataloaders=val.dataloader(512))
-
-cpmf = CPMF(interactions=train, embedding_dim=50, lr=1e-3, batch_size=512, weight_decay=0)
-es = EarlyStopping(monitor='val_loss', min_delta=0.00, patience=3, verbose=False, mode='min')
-trainer = Trainer(gpus=1, max_epochs=200, logger=False, callbacks=es)
-trainer.fit(cpmf, train_dataloader=train.dataloader(512), val_dataloaders=val.dataloader(512))
-
-gmf = GMF(interactions=train, embedding_dim=50, lr=1e-3, batch_size=512, weight_decay=0)
-es = EarlyStopping(monitor='val_loss', min_delta=0.00, patience=3, verbose=False, mode='min')
-trainer = Trainer(gpus=1, max_epochs=200, logger=False, callbacks=es)
-trainer.fit(gmf, train_dataloader=train.dataloader(512), val_dataloaders=val.dataloader(512))
-
-gaussiangmf = GaussianGMF(interactions=train, embedding_dim=50, lr=1e-3, batch_size=512, weight_decay=0)
-es = EarlyStopping(monitor='val_loss', min_delta=0.00, patience=3, verbose=False, mode='min')
-trainer = Trainer(gpus=1, max_epochs=200, logger=False, callbacks=es)
-trainer.fit(gaussiangmf, train_dataloader=train.dataloader(512), val_dataloaders=val.dataloader(512))
-
-train.score_labels, train.scores = torch.unique(train.scores, return_inverse=True)
-val.scores = torch.unique(val.scores, return_inverse=True)[1]
-ordrec = OrdRec(interactions=train, embedding_dim=50, lr=1e-3, batch_size=512, weight_decay=0)
-es = EarlyStopping(monitor='val_loss', min_delta=0.00, patience=3, verbose=False, mode='min')
-trainer = Trainer(gpus=1, max_epochs=200, logger=False, callbacks=es)
-trainer.fit(ordrec, train_dataloader=train.dataloader(512), val_dataloaders=val.dataloader(512))
-
-'''
-funk_svd.evaluation = {}
-evaluate_ratings(funk_svd, test)
-
-
-generalized_mf = GCPMF(interactions=train, embedding_dim=50, lr=1e-3, batch_size=512, weight_decay=0)
-es = EarlyStopping(monitor='val_loss', min_delta=0.00, patience=3, verbose=False, mode='min')
-trainer = Trainer(gpus=1, max_epochs=200, logger=False, callbacks=es)
-trainer.fit(generalized_mf, train_dataloader=train.dataloader(512), val_dataloaders=val.dataloader(512))
-def objective(trial):
-    lr = trial.suggest_float('lr', 1e-5, 1e-4)
-    linear_lr = trial.suggest_float('linear_lr', 1e-2, 1e-1)
-    model = GMF(interactions=train, embedding_dim=50, lr=lr, linear_lr=linear_lr, batch_size=512, weight_decay=0)
+results = {}
+algs = [FunkSVD, CPMF, GMF, GaussianGMF, OrdRec]
+for alg in algs:
+    if alg == OrdRec:
+        train.score_labels, train.scores = torch.unique(train.scores, return_inverse=True)
+        val.scores = torch.unique(val.scores, return_inverse=True)[1]
+    model = alg(interactions=train, embedding_dim=50, lr=1e-3, batch_size=512, weight_decay=0)
     es = EarlyStopping(monitor='val_loss', min_delta=0.00, patience=3, verbose=False, mode='min')
     trainer = Trainer(gpus=1, max_epochs=200, logger=False, callbacks=es)
-    trainer.fit(model, train_dataloader=train.dataloader(512), val_dataloaders=val.dataloader(2**12))
-    return trainer.callback_metrics["val_loss"].item()
+    trainer.fit(model, train_dataloader=train.dataloader(512), val_dataloaders=val.dataloader(512))
+    results[f'{model}'.split('(')[0]] = model.test_ratings(test)
+    results[f'{model}'.split('(')[0]].update(model.test_recommendations(test, train_val, 10, 4))
 
-study = optuna.create_study(direction="minimize")
-study.optimize(objective, n_trials=20)
-trials_summary = sorted(study.trials, key=lambda x: -np.inf if x.value is None else x.value)
-trials_summary = [dict(trial_number=trial.number, score=trial.value, **trial.params) for trial in trials_summary]
-trials_summary = pd.DataFrame(trials_summary)
-print(trials_summary)
-'''
+results_df = pd.DataFrame.from_dict(results, orient='Index')
+ratings = results_df[['loss', 'RMSE', 'RPI', 'Classification']]
+print(ratings)
 
+colors = [c for c in list(BASE_COLORS)]
+keys = results_df.index.to_list()
+colors = {keys[i]:colors[i] for i in range(len(keys))}
+f, ax = plt.subplots(nrows=3, figsize=(5, 10), sharex=True)
+for key in keys:
+    ax[0].plot(torch.arange(1, 11), results_df['Precision'][key],
+               '-', color=colors[key], label=key, linewidth=3, alpha=0.6)
+    ax[1].plot(torch.arange(1, 11), results_df['Recall'][key],
+               '-', color=colors[key], label=key, linewidth=3, alpha=0.6)
+    ax[2].plot(torch.arange(1, 11), results_df['NDCG'][key],
+               '-', color=colors[key], label=key, linewidth=3, alpha=0.6)
+ax[0].set_xticks(torch.arange(1, 11))
+ax[0].set_xlabel('K', fontsize=20)
+ax[0].set_ylabel('Precision@K', fontsize=20)
+ax[0].legend(ncol=2)
+ax[1].set_xlabel('K', fontsize=20)
+ax[1].set_ylabel('Recall@K', fontsize=20)
+ax[1].legend(ncol=2)
+ax[2].set_xlabel('K', fontsize=20)
+ax[2].set_ylabel('NDCG@K', fontsize=20)
+ax[2].legend(ncol=2)
+f.tight_layout()
 
+f, ax = plt.subplots(figsize=(10, 5))
+keys = ['CPMF', 'GaussianGMF', 'OrdRec']
+for key in keys:
+    ax.plot(torch.arange(1, 21), results_df['Quantile RMSE'][key],
+            '-', color=colors[key], label=key, linewidth=3, alpha=0.6)
+ax.set_xticks(torch.arange(1, 21))
+ax.set_xticklabels([round(elem, 2) for elem in torch.linspace(start=0.05, end=1, steps=20).tolist()])
+ax.set_xlabel('Uncertainty quantile', fontsize=20)
+ax.set_ylabel('RMSE', fontsize=20)
+ax.legend(ncol=2)
+f.tight_layout()
 
+f, ax = plt.subplots(figsize=(10, 5))
+for key in keys:
+    ax.plot(torch.arange(2, 11), results_df['RRI'][key].detach(),
+            '-', color=colors[key], label=key, linewidth=3, alpha=0.6)
+ax.set_xlabel('K', fontsize=20)
+ax.set_ylabel('RRI@K', fontsize=20)
+ax.legend(ncol=2)
+f.tight_layout()
