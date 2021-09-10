@@ -92,7 +92,7 @@ class Explicit(object):
         users, items, ratings = batch
         output = self.forward(users, items)
         loss = self.loss_func(output, ratings)
-        self.log('val_loss', loss)
+        self.log('val_loss', loss, prog_bar=True)
 
     def test_ratings(self, test_interactions):
         with torch.no_grad():
@@ -132,7 +132,7 @@ class Implicit(object):
         self.log('val_loss', loss)
 
 
-class FunkSVD(Explicit, FactorizationModel):
+class ExplicitMF(Explicit, FactorizationModel):
 
     def __init__(self, interactions, embedding_dim, lr, batch_size, weight_decay):
         super().__init__(interactions, embedding_dim, lr, batch_size, weight_decay)

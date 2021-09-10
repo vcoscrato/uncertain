@@ -17,3 +17,9 @@ def cross_entropy_loss(positive, negative):
 
 def bpr_loss(positive, negative):
     return - (positive - negative).sigmoid().log().sum()
+
+def uncertain_bpr_loss(positive, negative, weight=1):
+    relevance_pos = positive[0]
+    relevance_neg = negative[0]
+    unc = positive[1] + negative[1]
+    return torch.divide(relevance_pos - relevance_neg, unc).mean() - weight * torch.log(unc).mean()

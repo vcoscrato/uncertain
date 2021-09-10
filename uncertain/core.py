@@ -133,8 +133,9 @@ class Interactions(torch.utils.data.Dataset):
         return torch.utils.data.DataLoader(self, batch_size=batch_size,
                                            drop_last=True, shuffle=True, num_workers=torch.get_num_threads())
 
-    def split(self, test_percentage, min_profile_length=0, seed=0):
+    def split(self, validation_percentage, test_percentage, min_profile_length=0, seed=0):
         train_idx = []
+        val_idx = []
         test_idx = []
         if seed is not None:
             torch.manual_seed(seed)
@@ -147,12 +148,15 @@ class Interactions(torch.utils.data.Dataset):
                 idx = idx[self.timestamps[idx].argsort()]
             else:
                 idx = idx[torch.randperm(len(idx))]
-            cutoff = int((1.0 - test_percentage) * len(idx))
-            train_idx.append(idx[:cutoff])
-            test_idx.append(idx[cutoff:])
+            cut_train = int((1.0 - validation_percentage - test_percentage) * len(idx))
+            cut_val = int((1.0 - test_percentage) * len(idx))
+            train_idx.append(idx[:cut_train])
+            test_idx.append(idx[cut_train:cut_val])
+            val_idx.append(idx[cut_val:])
         train = Interactions(*self[torch.cat(train_idx)], **self.pass_args())
+        validation = Interactions(*self[torch.cat(val_idx)], **self.pass_args())
         test = Interactions(*self[torch.cat(test_idx)], **self.pass_args())
-        return train, test
+        return train, validation, test
 
 
 class Recommendations(object):
@@ -218,3 +222,52 @@ class Recommender(object):
             kwargs['item_labels'] = [self.item_labels[i] for i in ranking.cpu().tolist()]
 
         return Recommendations(**kwargs)
+
+    def test_ratings(self, test_interactions):
+        with torch.no_grad():
+            out = {}
+            predictions = self.forward(test_interactions.users, test_interactions.items)
+            out['loss'] = self.loss_func(predictions, test_interactions.scores).item()
+            if not self.is_uncertain:
+                out['RMSE'] = rmse_score(predictions, test_interactions.scores)
+            else:
+                out['RMSE'] = rmse_score(predictions[0], test_interactions.scores)
+                errors = torch.abs(test_interactions.scores - predictions[0])
+                out['RPI'] = rpi_score(errors, predictions[1])
+                out['Classification'] = classification(errors, predictions[1])
+                out['Correlation'] = correlation(errors, predictions[1])
+                out['Quantile RMSE'] = quantile_score(errors, predictions[1])
+            return out
+
+    def test_recommendations(self, test_interactions, train_interactions, max_k=10, relevance_threshold=None):
+        out = {}
+        precision = []
+        recall = []
+        ndcg_ = []
+        rri = []
+        precision_denom = torch.arange(1, max_k + 1, dtype=torch.float64)
+        ndcg_denom = torch.log2(precision_denom + 1)
+        for user in range(test_interactions.num_users):
+            targets = test_interactions.get_rated_items(user, threshold=relevance_threshold)
+            if not len(targets):
+                continue
+            rec = self.recommend(user, train_interactions.get_rated_items(user))
+            hits = get_hits(rec, targets)
+            num_hit = hits.cumsum(0)
+            precision.append(num_hit / precision_denom)
+            recall.append(num_hit / len(targets))
+            ndcg_.append(ndcg(hits, ndcg_denom))
+            if self.is_uncertain and hits.sum().item() > 0:
+                with torch.no_grad():
+                    rri_ = torch.empty(max_k - 1)
+                    for i in range(2, max_k + 1):
+                        unc = rec.uncertainties[:i]
+                        rri_[i - 2] = (unc.mean() - unc[hits[:i]]).mean() / unc.std()
+                    rri.append(rri_)
+        out['Precision'] = torch.vstack(precision).mean(0)
+        out['Recall'] = torch.vstack(recall).mean(0)
+        out['NDCG'] = torch.vstack(ndcg_).mean(0)
+        if len(rri) > 0:
+            rri = torch.vstack(rri)
+            out['RRI'] = rri.nansum(0) / (~rri.isnan()).float().sum(0)
+        return out

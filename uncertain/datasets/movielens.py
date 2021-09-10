@@ -25,6 +25,7 @@ URL_PREFIX = ('https://github.com/maciejkula/recommender_datasets/'
 VERSION = 'v0.2.0'
 
 
+
 def _get_movielens(dataset):
 
     extension = '.hdf5'
@@ -35,6 +36,7 @@ def _get_movielens(dataset):
                               os.path.join('movielens', VERSION),
                               'movielens_{}{}'.format(dataset,
                                                       extension))
+    print(path)
 
     with h5py.File(path, 'r') as data:
         return (data['/user_id'][:],
