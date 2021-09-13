@@ -2,7 +2,7 @@ import torch
 import pytorch_lightning as pl
 from uncertain.core import Recommender
 from uncertain.layers import ZeroEmbedding, ScaledEmbedding
-from uncertain.losses import mse_loss, gaussian_loss, max_prob_loss, cross_entropy_loss, bpr_loss
+from uncertain.losses import mse, gaussian, max_prob, cross_entropy, bpr, uncertain, adaptive_bpr
 from uncertain.metrics import rmse_score, rpi_score, classification, correlation, quantile_score, get_hits, ndcg
 
 
@@ -114,29 +114,29 @@ class Explicit(object):
 class Implicit(object):
 
     def get_negative_prediction(self, users):
-        sampled_items = torch.randint(0, self.num_items, (len(users),))
+        sampled_items = torch.randint(0, self.num_items, (len(users),), device=users.device)
         negative_prediction = self.forward(users, sampled_items)
         return negative_prediction
 
-    def training_step(self, train_batch, batch_idx):
-        users, items = train_batch
+    def training_step(self, batch, batch_idx):
+        users, items = batch
         output = self.forward(users, items)
         loss = self.loss_func(output, self.get_negative_prediction(users))
         self.log('train_loss', loss)
         return loss
 
-    def validation_step(self, val_batch, batch_idx):
-        users, items = val_batch
+    def validation_step(self, batch, batch_idx):
+        users, items = batch
         output = self.forward(users, items)
         loss = self.loss_func(output, self.get_negative_prediction(users))
-        self.log('val_loss', loss)
+        self.log('val_loss', loss, prog_bar=True)
 
 
 class ExplicitMF(Explicit, FactorizationModel):
 
     def __init__(self, interactions, embedding_dim, lr, batch_size, weight_decay):
         super().__init__(interactions, embedding_dim, lr, batch_size, weight_decay)
-        self.loss_func = mse_loss
+        self.loss_func = mse
 
     @property
     def is_uncertain(self):
@@ -153,7 +153,7 @@ class CPMF(Explicit, FactorizationModel):
 
     def __init__(self, interactions, embedding_dim, lr, batch_size, weight_decay):
         super().__init__(interactions, embedding_dim, lr, batch_size, weight_decay)
-        self.loss_func = gaussian_loss
+        self.loss_func = gaussian
         self.user_gammas = ScaledEmbedding(self.num_users, 1)
         self.item_gammas = ScaledEmbedding(self.num_items, 1)
         self.var_activation = torch.nn.Softplus()
@@ -177,7 +177,7 @@ class OrdRec(Explicit, FactorizationModel):
     def __init__(self, interactions, embedding_dim, lr, batch_size, weight_decay):
         super().__init__(interactions, embedding_dim, lr, batch_size, weight_decay)
         self.user_betas = ZeroEmbedding(self.num_users, len(self.score_labels) - 1)
-        self.loss_func = max_prob_loss
+        self.loss_func = max_prob
 
     @property
     def is_uncertain(self):
@@ -224,35 +224,13 @@ class OrdRec(Explicit, FactorizationModel):
             return out
 
 
-class ImplicitMF(Implicit, FactorizationModel):
-
-    def __init__(self, interactions, embedding_dim, lr, batch_size, weight_decay, loss='bpr'):
-        super().__init__(interactions, embedding_dim, lr, batch_size, weight_decay)
-        if loss == 'bpr':
-            self.loss_func = bpr_loss
-        elif loss == 'cross_entropy':
-            self.loss_func = cross_entropy_loss
-        else:
-            raise AttributeError('loss should be one of ["bpr", "cross_entropy"].')
-
-    @property
-    def is_uncertain(self):
-        return False
-
-    def forward(self, user_ids, item_ids):
-        user_embedding = self.user_embeddings(user_ids)
-        item_embedding = self.item_embeddings(item_ids)
-        dot = (user_embedding * item_embedding).sum(1)
-        return torch.sigmoid(dot)
-
-
 class GMF(Explicit, FactorizationModel):
 
     def __init__(self, interactions, embedding_dim, lr, batch_size, weight_decay):
         super().__init__(interactions, embedding_dim, lr, batch_size, weight_decay)
         self.linear = torch.nn.Linear(embedding_dim, 1, bias=False)
         torch.nn.init.normal_(self.linear.weight, mean=0, std=0.01)
-        self.loss_func = mse_loss
+        self.loss_func = mse
 
     @property
     def is_uncertain(self):
@@ -272,7 +250,54 @@ class GaussianGMF(Explicit, FactorizationModel):
         self.var_activation = torch.nn.Softplus()
         self.linear = torch.nn.Linear(embedding_dim, 2, bias=False)
         torch.nn.init.normal_(self.linear.weight, mean=0, std=0.01)
-        self.loss_func = gaussian_loss
+        self.loss_func = gaussian
+
+    @property
+    def is_uncertain(self):
+        return True
+
+    def forward(self, user_ids, item_ids):
+        user_embedding = self.user_embeddings(user_ids)
+        item_embedding = self.item_embeddings(item_ids)
+        dot = self.linear(user_embedding * item_embedding)
+        return dot[:, 0], self.var_activation(dot[:, 1])
+
+
+class ImplicitMF(Implicit, FactorizationModel):
+
+    def __init__(self, interactions, embedding_dim, lr, batch_size, weight_decay, loss='bpr'):
+        super().__init__(interactions, embedding_dim, lr, batch_size, weight_decay)
+        if loss == 'bpr':
+            self.loss_func = bpr
+        elif loss == 'cross_entropy':
+            self.loss_func = cross_entropy
+        else:
+            raise AttributeError('loss should be one of ["bpr", "cross_entropy"].')
+
+    @property
+    def is_uncertain(self):
+        return False
+
+    def forward(self, user_ids, item_ids):
+        user_embedding = self.user_embeddings(user_ids)
+        item_embedding = self.item_embeddings(item_ids)
+        dot = (user_embedding * item_embedding).sum(1)
+        return torch.sigmoid(dot)
+
+
+class ImplicitGaussianGMF(Implicit, FactorizationModel):
+
+    def __init__(self, interactions, embedding_dim, lr, batch_size, weight_decay, loss='bpr'):
+        super().__init__(interactions, embedding_dim, lr, batch_size, weight_decay)
+        self.var_activation = torch.nn.Softplus()
+        self.linear = torch.nn.Linear(embedding_dim, 2, bias=False)
+        torch.nn.init.normal_(self.linear.weight, mean=0, std=0.01)
+        if loss == 'bpr':
+            self.loss_func = adaptive_bpr
+        elif loss == 'uncertain':
+            self.loss_func = uncertain
+        else:
+            raise AttributeError('loss should be one of ["bpr", "uncertain"].')
 
     @property
     def is_uncertain(self):

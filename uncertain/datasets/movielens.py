@@ -36,7 +36,6 @@ def _get_movielens(dataset):
                               os.path.join('movielens', VERSION),
                               'movielens_{}{}'.format(dataset,
                                                       extension))
-    print(path)
 
     with h5py.File(path, 'r') as data:
         return (data['/user_id'][:],
