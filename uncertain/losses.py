@@ -12,8 +12,8 @@ def max_prob(predicted_ratings, observed_ratings):
     return -predicted_ratings[range(len(-predicted_ratings)), observed_ratings].log().mean()
 
 def cross_entropy(positive, negative):
-    positive = torch.log(positive)
-    negative = torch.log(1 - negative)
+    positive = torch.log(positive.sigmoid())
+    negative = torch.log(1 - negative.sigmoid())
     return - torch.cat((positive, negative)).mean()
 
 def bpr(positive, negative):

@@ -3,7 +3,6 @@ import pytorch_lightning as pl
 from uncertain.core import Recommender
 from uncertain.layers import ZeroEmbedding, ScaledEmbedding
 from uncertain.losses import mse, gaussian, max_prob, cross_entropy, bpr, uncertain, adaptive_bpr
-from uncertain.metrics import rmse_score, rpi_score, classification, correlation, quantile_score, get_hits, ndcg
 
 
 class FactorizationModel(pl.LightningModule, Recommender):
@@ -45,39 +44,6 @@ class FactorizationModel(pl.LightningModule, Recommender):
             candidates_var = self.item_embeddings(candidates)
         return torch.cosine_similarity(items_var, candidates_var, dim=-1)
 
-    def test_recommendations(self, test_interactions, train_interactions, max_k=10, relevance_threshold=None):
-        out = {}
-        precision = []
-        recall = []
-        ndcg_ = []
-        rri = []
-        precision_denom = torch.arange(1, max_k + 1, dtype=torch.float64)
-        ndcg_denom = torch.log2(precision_denom + 1)
-        for user in range(test_interactions.num_users):
-            targets = test_interactions.get_rated_items(user, threshold=relevance_threshold)
-            if not len(targets):
-                continue
-            rec = self.recommend(user, train_interactions.get_rated_items(user))
-            hits = get_hits(rec, targets)
-            num_hit = hits.cumsum(0)
-            precision.append(num_hit / precision_denom)
-            recall.append(num_hit / len(targets))
-            ndcg_.append(ndcg(hits, ndcg_denom))
-            if self.is_uncertain and hits.sum().item() > 0:
-                with torch.no_grad():
-                    rri_ = torch.empty(max_k - 1)
-                    for i in range(2, max_k + 1):
-                        unc = rec.uncertainties[:i]
-                        rri_[i - 2] = (unc.mean() - unc[hits[:i]]).mean() / unc.std()
-                    rri.append(rri_)
-        out['Precision'] = torch.vstack(precision).mean(0)
-        out['Recall'] = torch.vstack(recall).mean(0)
-        out['NDCG'] = torch.vstack(ndcg_).mean(0)
-        if len(rri) > 0:
-            rri = torch.vstack(rri)
-            out['RRI'] = rri.nansum(0) / (~rri.isnan()).float().sum(0)
-        return out
-
 
 class Explicit(object):
 
@@ -93,22 +59,6 @@ class Explicit(object):
         output = self.forward(users, items)
         loss = self.loss_func(output, ratings)
         self.log('val_loss', loss, prog_bar=True)
-
-    def test_ratings(self, test_interactions):
-        with torch.no_grad():
-            out = {}
-            predictions = self.forward(test_interactions.users, test_interactions.items)
-            out['loss'] = self.loss_func(predictions, test_interactions.scores).item()
-            if not self.is_uncertain:
-                out['RMSE'] = rmse_score(predictions, test_interactions.scores)
-            else:
-                out['RMSE'] = rmse_score(predictions[0], test_interactions.scores)
-                errors = torch.abs(test_interactions.scores - predictions[0])
-                out['RPI'] = rpi_score(errors, predictions[1])
-                out['Classification'] = classification(errors, predictions[1])
-                out['Correlation'] = correlation(errors, predictions[1])
-                out['Quantile RMSE'] = quantile_score(errors, predictions[1])
-            return out
 
 
 class Implicit(object):
@@ -282,7 +232,31 @@ class ImplicitMF(Implicit, FactorizationModel):
         user_embedding = self.user_embeddings(user_ids)
         item_embedding = self.item_embeddings(item_ids)
         dot = (user_embedding * item_embedding).sum(1)
-        return torch.sigmoid(dot)
+        return dot
+
+
+class ImplicitGMF(Implicit, FactorizationModel):
+
+    def __init__(self, interactions, embedding_dim, lr, batch_size, weight_decay, loss='bpr'):
+        super().__init__(interactions, embedding_dim, lr, batch_size, weight_decay)
+        self.linear = torch.nn.Linear(embedding_dim, 1, bias=False)
+        torch.nn.init.normal_(self.linear.weight, mean=0, std=0.01)
+        if loss == 'bpr':
+            self.loss_func = bpr
+        elif loss == 'cross_entropy':
+            self.loss_func = cross_entropy
+        else:
+            raise AttributeError('loss should be one of ["bpr", "cross_entropy"].')
+
+    @property
+    def is_uncertain(self):
+        return False
+
+    def forward(self, user_ids, item_ids):
+        user_embedding = self.user_embeddings(user_ids)
+        item_embedding = self.item_embeddings(item_ids)
+        dot = self.linear(user_embedding * item_embedding)
+        return dot.flatten()
 
 
 class ImplicitGaussianGMF(Implicit, FactorizationModel):
