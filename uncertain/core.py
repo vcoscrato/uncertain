@@ -1,222 +1,65 @@
 import torch
-import scipy.sparse as sp
+from pandas import DataFrame
+from numpy import column_stack
+from pytorch_lightning import LightningModule
 
 
-def make_tensor(x):
-    if torch.is_tensor(x):
-        return x
-    else:
-        return torch.tensor(x)
+class FactorizationModel(LightningModule):
 
-
-class Interactions(torch.utils.data.Dataset):
-
-    def __init__(self, users, items, scores=None, timestamps=None, num_users=None, num_items=None,
-                 user_labels=None, item_labels=None, score_labels=None):
-
+    def __init__(self, n_user, n_item, embedding_dim, lr, weight_decay, loss_func):
         super().__init__()
-        self.users = make_tensor(users).long()
-        self.num_users = num_users or torch.max(self.users).item() + 1
-        if user_labels is not None:
-            self.user_labels = list(user_labels)
+        self.n_user = n_user
+        self.n_item = n_item
+        self.embedding_dim = embedding_dim
+        self.lr = lr
+        self.weight_decay = weight_decay
+        self.init_embeddings()
+        self.loss_func = loss_func
 
-        self.items = make_tensor(items).long()
-        assert len(self.items) == len(self.items), 'items and items should have same length'
-        self.num_items = num_items or torch.max(self.items).item() + 1
-        if item_labels is not None:
-            self.item_labels = list(item_labels)
+    def init_embeddings(self):
+        self.user_embeddings = torch.nn.Embedding(self.n_user, self.embedding_dim)
+        self.item_embeddings = torch.nn.Embedding(self.n_item, self.embedding_dim)
+        torch.nn.init.normal_(self.user_embeddings.weight, mean=0, std=0.01)
+        torch.nn.init.normal_(self.item_embeddings.weight, mean=0, std=0.01)
 
-        if scores is not None:
-            if score_labels is not None:
-                self.scores = make_tensor(scores).long()
-                self.score_labels = score_labels
-            else:
-                self.scores = make_tensor(scores).float()
-            assert len(self.users) == len(scores), 'users, items and scores should have same length'
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
+        return optimizer
 
-        if timestamps is not None:
-            assert len(self.users) == len(timestamps), 'users, items and timestamps should have same length'
-            self.timestamps = make_tensor(timestamps)
+    def dot(self, user_ids, item_ids):
+        user_embeddings = self.user_embeddings(user_ids)
+        item_embeddings = self.item_embeddings(item_ids)
+        return (user_embeddings * item_embeddings).sum(1)
 
-    @property
-    def type(self):
-        if not hasattr(self, 'scores'):
-            return 'Implicit'
-        if not hasattr(self, 'score_labels'):
-            return 'Explicit'
-        else:
-            return 'Ordinal'
+    def forward(self, user_ids, item_ids):
+        return self.dot(user_ids, item_ids)
 
-    def __len__(self):
-        return len(self.users)
+    def predict(self, user_ids, item_ids):
+        with torch.no_grad():
+            return self(user_ids, item_ids).numpy()
 
-    def __repr__(self):
-        return ('<{type} interactions ({num_users} users x {num_items} items x {num_interactions} interactions)>'
-                .format(type=self.type, num_users=self.num_users, num_items=self.num_items, num_interactions=len(self)))
-
-    def __getitem__(self, idx):
-        if hasattr(self, 'scores'):
-            return self.users[idx], self.items[idx], self.scores[idx]
-        else:
-            return self.users[idx], self.items[idx]
-
-    def shuffle(self, seed=None):
-        if seed is not None:
-            torch.manual_seed(seed)
-        shuffle_indices = torch.randperm(len(self))
-        self.users = self.users[shuffle_indices]
-        self.items = self.items[shuffle_indices]
-        if hasattr(self, 'scores'):
-            self.scores = self.scores[shuffle_indices]
-        if hasattr(self, 'timestamps'):
-            self.timestamps = self.timestamps[shuffle_indices]
-
-    def pass_args(self):
-        kwargs = {'num_users': self.num_users, 'num_items': self.num_items}
-        if hasattr(self, 'user_labels'):
-            kwargs['user_labels'] = self.user_labels
-        if hasattr(self, 'item_labels'):
-            kwargs['item_labels'] = self.item_labels
-        if hasattr(self, 'score_labels'):
-            kwargs['score_labels'] = self.score_labels
-        return kwargs
-
-    def tocoo(self):
-        """
-        Transform to a scipy.sparse COO matrix.
-        """
-        row = self.users
-        col = self.items
-        data = self.scores.cpu() if self.type == 'Explicit' else torch.ones_like(col)
-        return sp.coo_matrix((data, (row, col)),
-                             shape=(self.num_users, self.num_items))
-
-    def get_rated_items(self, user):
-        if isinstance(user, str):
-            user = self.user_labels.index(user)
-        idx = self.users == user
-        return self.items[idx]
-
-    def get_negative_items(self, user):
-        if isinstance(user, str):
-            user = self.user_labels.index(user)
-        rated_items = self.get_rated_items(user)
-        negative_items = torch.tensor([i for i in range(self.num_items) if i not in rated_items])
-        return negative_items
-
-    def get_user_profile_length(self):
-        user_profile_length = torch.zeros(self.num_users)
-        count = torch.bincount(self.users)
-        user_profile_length[:len(count)] = count
-        return user_profile_length
-
-    def get_item_popularity(self):
-        item_pop = torch.zeros(self.num_items)
-        count = torch.bincount(self.items)
-        item_pop[:len(count)] = count
-        return item_pop
-
-    def get_item_variance(self):
-        if self.type == 'Implicit':
-            raise TypeError('Item variance not defined for implicit scores.')
-        variances = torch.empty(self.num_items)
-        for i in range(self.num_items):
-            variances[i] = self.scores[self.items == i].float().var()
-        variances[torch.isnan(variances)] = 0
-        return variances
-
-    def dataloader(self, batch_size):
-        return torch.utils.data.DataLoader(self, batch_size=batch_size,
-                                           drop_last=True, shuffle=True, num_workers=torch.get_num_threads())
-
-    def split(self, validation_percentage, test_percentage, min_profile_length=0, seed=0):
-        train_idx = []
-        val_idx = []
-        test_idx = []
-        if seed is not None:
-            torch.manual_seed(seed)
-        for u in range(self.num_users):
-            idx = torch.where(self.users == u)[0]
-            if len(idx) < min_profile_length:
-                train_idx.append(idx)
-                continue
-            if hasattr(self, 'timestamps'):
-                idx = idx[self.timestamps[idx].argsort()]
-            else:
-                idx = idx[torch.randperm(len(idx))]
-            cut_train = int((1.0 - validation_percentage - test_percentage) * len(idx))
-            cut_val = int((1.0 - test_percentage) * len(idx))
-            train_idx.append(idx[:cut_train])
-            test_idx.append(idx[cut_train:cut_val])
-            val_idx.append(idx[cut_val:])
-        train = Interactions(*self[torch.cat(train_idx)], **self.pass_args())
-        validation = Interactions(*self[torch.cat(val_idx)], **self.pass_args())
-        test = Interactions(*self[torch.cat(test_idx)], **self.pass_args())
-        return train, validation, test
+    def predict_user(self, user):
+        with torch.no_grad():
+            user_embedding = self.user_embeddings(user)
+            return (user_embedding * self.item_embeddings.weight).sum(1).numpy()
 
 
-class Recommendations(object):
+class VanillaRecommender:
 
-    def __init__(self, user, items, scores, user_label=None, item_labels=None, uncertainties=None):
-
-        self.user = user
-        self.items = items
-        self.scores = scores
-        if user_label is None:
-            self.user_label = user
-        else:
-            self.user_label = user_label
-        if item_labels is None:
-            self.item_labels = items
-        else:
-            self.item_labels = item_labels
-        self.uncertainties = uncertainties
-
-    def __repr__(self):
-
-        s = 'Recommendation list for user {}: \n'.format(self.user_label)
-        for i in range(len(self.items)):
-            s += 'Item: {}'.format(self.item_labels[i])
-            s += '; Score: {sco:1.2f}'.format(sco=self.scores[i])
-            if self.uncertainties is not None:
-                s += '; Uncertainty: {unc:1.2f}'.format(unc=self.uncertainties[i])
-            s += '.\n'
-
-        return s
-
-
-class Recommender(object):
-
-    def pass_args(self, interactions):
-        for key, value in interactions.pass_args().items():
-            setattr(self, key, value)
-
-    def recommend(self, user, remove_items=None, top=10):
-
-        if isinstance(user, str):
-            user = self.user_labels.index(user)
-
-        predictions = self.predict(user)
-
-        if not self.is_uncertain:
-            predictions = predictions
-        else:
-            uncertainties = predictions[1]
-            predictions = predictions[0]
-
+    def recommend(self, user, remove_items=None, n=10):
+        out = DataFrame(self.predict_user(torch.tensor(user)), columns=['scores'])
         if remove_items is not None:
-            predictions[remove_items] = -float('inf')
-            ranking = predictions.argsort(descending=True)[:-len(remove_items)][:top]
-        else:
-            ranking = predictions.argsort(descending=True)[:top]
+            out.loc[remove_items, 'scores'] = -float('inf')
+        out = out.sort_values(by='scores', ascending=False)[:n]
+        return out
 
-        kwargs = {'user': user, 'items': ranking, 'scores': predictions[ranking]}
-        if self.is_uncertain:
-            kwargs['uncertainties'] = uncertainties[ranking]
 
-        if hasattr(self, 'user_labels'):
-            kwargs['user_label'] = self.user_labels[user]
-        if hasattr(self, 'item_labels'):
-            kwargs['item_labels'] = [self.item_labels[i] for i in ranking.cpu().tolist()]
+class UncertainRecommender:
 
-        return Recommendations(**kwargs)
+    def recommend(self, user, remove_items=None, n=10):
+        out = DataFrame(column_stack(self.predict_user(torch.tensor(user))))
+        out.columns = ['scores', 'uncertainties']
+        if remove_items is not None:
+            out.loc[remove_items, 'scores'] = -float('inf')
+        out = out.sort_values(by='scores', ascending=False)[:n]
+        return out
