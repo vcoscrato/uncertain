@@ -1,9 +1,17 @@
 import os
 import h5py
 import requests
+import numpy as np
 import pandas as pd
+import sklearn.preprocessing as pp
+from scipy.sparse import csc_matrix
 from torch.utils.data import DataLoader
 from pytorch_lightning import LightningDataModule
+
+
+def cosine_similarities(mat):
+    col_normed_mat = pp.normalize(mat.tocsc(), axis=0)
+    return col_normed_mat.T * col_normed_mat
 
 
 def split(interactions, test_items):
@@ -29,8 +37,6 @@ class MovieLens(LightningDataModule):
         super().__init__()
         self.implicit = implicit
         self.batch_size = batch_size
-
-    def prepare_data(self):
 
         path = 'data/movielens.hdf5'
         # Download
@@ -60,13 +66,19 @@ class MovieLens(LightningDataModule):
         data.user = data.user.factorize()[0]
         data.item = data.item.factorize()[0]
 
+        # Shapes
+        self.n_user = data.user.nunique()
+        self.n_item = data.item.nunique()
+
         # Split
         self.train, self.val, self.test = split(data, test_items=4)
 
+        # Item similarities
+        csc = csc_matrix((self.train[:, 2], (self.train[:, 0], self.train[:, 1])), shape=[self.n_user, self.n_item])
+        self.item_similarity = cosine_similarities(csc).toarray()
+
         # Finish
-        self.n_user = data.user.nunique()
-        self.n_item = data.item.nunique()
-        print(f'MovieLens data prepared: {self.n_user} users, {self.n_item} item.')
+        print(f'MovieLens data prepared: {self.n_user} users, {self.n_item} items.')
         print(f'{len(self.train)} Train interactions, {len(self.val)} validation and test interactions.')
 
     def to_ordinal(self):

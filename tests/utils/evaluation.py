@@ -6,20 +6,6 @@ from matplotlib import pyplot as plt
 from uncertain.metrics import rpi_score, classification, quantile_score
 
 
-def test_ratings(model, data):
-    out = {}
-    predictions = model.predict(torch.tensor(data.test[:, 0]).long(), torch.tensor(data.test[:, 1]).long())
-    if type(predictions) == tuple:
-        out['RMSE'] = np.sqrt(np.square(predictions[0] - data.test[:, 2]).mean())
-        errors = np.abs(data.test[:, 2] - predictions[0])
-        out['RPI'] = rpi_score(errors, predictions[1])
-        out['Classification'] = classification(errors, predictions[1])
-        out['Quantile RMSE'] = quantile_score(errors, predictions[1])
-    else:
-        out['RMSE'] = np.sqrt(np.square(predictions - data.test[:, 2]).mean())
-    return out
-
-
 def test_recommendations(model, data, max_k=10):
 
     metrics = {'Precision': np.zeros((data.n_user, max_k)),
@@ -27,8 +13,21 @@ def test_recommendations(model, data, max_k=10):
                'NDCG': np.zeros((data.n_user, max_k)),
                'Diversity': np.zeros((data.n_user, max_k - 1)),
                'Novelty': np.zeros((data.n_user, max_k)) * np.NaN}
-    if hasattr(model.recommend(0), 'uncertainties'):
-        metrics['RRI'] = np.zeros((data.n_user, max_k - 1)) * np.NaN
+
+    predictions = model.predict(torch.tensor(data.test[:, 0]).long(), torch.tensor(data.test[:, 1]).long())
+    rating_metrics = {}
+    if type(predictions) == tuple:
+        metrics['RRI'] = np.zeros((data.n_user, max_k)) * np.NaN
+        avg_unc, std_unc = predictions[1].mean(), predictions[1].std()
+        if not data.implicit:
+            rating_metrics['RMSE'] = np.sqrt(np.square(predictions[0] - data.test[:, 2]).mean())
+            errors = np.abs(data.test[:, 2] - predictions[0])
+            rating_metrics['RPI'] = rpi_score(errors, predictions[1])
+            rating_metrics['Classification'] = classification(errors, predictions[1])
+            rating_metrics['Quantile RMSE'] = quantile_score(errors, predictions[1])
+            avg_unc, std_unc = predictions[1].mean(), predictions[1].std()
+    elif not data.implicit:
+        rating_metrics['RMSE'] = np.sqrt(np.square(predictions - data.test[:, 2]).mean())
 
     diversity_denom = comb(np.arange(2, max_k+1), 2)
     precision_denom = np.arange(1, max_k + 1)
@@ -40,12 +39,12 @@ def test_recommendations(model, data, max_k=10):
         if not n_target:
             continue
 
-        rated = data.train[:, 1][data.train[:, 0] == user]
+        rated = data.train[:, 1][data.train[:, 0] == user].astype('int')
         rec = model.recommend(user, remove_items=rated, n=data.n_item-len(rated))
         hits = rec.index[:max_k].isin(targets)
         n_hit = hits.cumsum(0)
         with torch.no_grad():
-            rec_embeddings = model.item_embeddings(torch.tensor(rec.index[:max_k]).long())
+            rec_distance = (1 - data.item_similarity[rec.index[:max_k]]) / 2
         '''
         # AUC
         targets_pos = sorted([rec.index.get_loc(i) for i in targets])
@@ -54,8 +53,8 @@ def test_recommendations(model, data, max_k=10):
         metrics['AUC'] = sum(n_after_target) / (len(n_after_target) * n_negative)
         '''
         # Diversity
-        distance = torch.triu(1 - torch.cosine_similarity(rec_embeddings, rec_embeddings.unsqueeze(1), dim=-1), 1) / 2
-        metrics['Diversity'][user] = distance.cumsum(0).cumsum(1).diag(1).numpy() / diversity_denom
+        distance = np.triu(rec_distance[:, rec.index[:max_k]], 1)
+        metrics['Diversity'][user] = np.diag(distance.cumsum(0).cumsum(1), 1) / diversity_denom
 
         if hits.sum() > 0:
             # Accuracy
@@ -71,20 +70,13 @@ def test_recommendations(model, data, max_k=10):
 
             # RRI
             if hasattr(rec, 'uncertainties'):
-                for k in range(1, max_k):
-                    unc = rec.uncertainties[:k+1]
-                    metrics['RRI'][user][k-1] = (unc.mean() - unc[hits[:k+1]].mean()) / unc.std()
+                unc = (avg_unc - rec.uncertainties[:max_k]) / std_unc * hits
+                metrics['RRI'][user] = unc.cumsum(0) / precision_denom
 
             # Expected surprise (novelty)
-            with torch.no_grad():
-                rated_embeddings = model.item_embeddings(torch.tensor(rated).long())
-            for k in range(max_k):
-                if hits[:k+1].sum() > 0:
-                    hits_embeddings = rec_embeddings[:k+1][torch.tensor(hits[:k+1])]
-                    distance = 1 - torch.cosine_similarity(hits_embeddings, rated_embeddings.unsqueeze(1), dim=-1)
-                    metrics['Novelty'][user][k] = distance.max(0).values.mean().item() / 2
+            metrics['Novelty'][user] = (rec_distance[:, rated].min(1) * hits).cumsum(0) / hits.cumsum(0)
 
-    return {key: np.nanmean(value, 0) for key, value in metrics.items()}
+    return {**rating_metrics, **{key: np.nanmean(value, 0) for key, value in metrics.items()}}
 
 
 def uncertainty_distributions(model, size=10000):

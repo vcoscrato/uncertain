@@ -1,28 +1,59 @@
-import torch
-from uncertain.core import Recommender
+import numpy as np
+from uncertain.core import UncertainRecommender
 
 
-class Ensemble(Recommender):
+class Ensemble(UncertainRecommender):
 
-    def __init__(self, interactions, models):
-        super().__init__()
-        self.pass_args(interactions)
+    def __init__(self, models):
         self.models = models
 
     @property
     def is_uncertain(self):
         return True
 
-    def predict(self, user_id):
-        predictions = torch.empty((self.num_items, len(self.models)))
+    def predict(self, user_ids, item_ids):
+        predictions = np.empty((len(user_ids), len(self.models)))
         for idx, model in enumerate(self.models):
-            predictions[:, idx] = model.predict(user_id)
-        estimates = predictions.mean(1)
-        errors = predictions.std(1)
-        return estimates, errors
+            predictions[:, idx] = model.predict(user_ids, item_ids)
+        scores = predictions.mean(1)
+        uncertainties = predictions.std(1)
+        return scores, uncertainties
+
+    def predict_user(self, user):
+        predictions = np.empty((self.models[0].n_item, len(self.models)))
+        for idx, model in enumerate(self.models):
+            predictions[:, idx] = model.predict_user(user)
+        scores = predictions.mean(1)
+        uncertainties = predictions.std(1)
+        return scores, uncertainties
 
 
-class UncertainWrapper(Recommender):
+class Resample(UncertainRecommender):
+
+    def __init__(self, base_MF, models):
+        self.MF = base_MF
+        self.models = models
+
+    @property
+    def is_uncertain(self):
+        return True
+
+    def predict(self, user_ids, item_ids):
+        predictions = np.empty((len(user_ids), len(self.models)))
+        for idx, model in enumerate(self.models):
+            predictions[:, idx] = model.predict(user_ids, item_ids)
+        uncertainties = predictions.std(1)
+        return self.MF.predict(user_ids, item_ids), uncertainties
+
+    def predict_user(self, user):
+        predictions = np.empty((self.models[0].n_item, len(self.models)))
+        for idx, model in enumerate(self.models):
+            predictions[:, idx] = model.predict_user(user)
+        uncertainties = predictions.std(1)
+        return self.MF.predict_user(user), uncertainties
+
+
+class UncertainWrapper(UncertainRecommender):
     """
     Wraps a score estimator with an uncertainty estimator.
 
@@ -35,62 +66,12 @@ class UncertainWrapper(Recommender):
         function that returns an uncertainty estimate for the
         given user.
     """
-    def __init__(self, interactions, scores, uncertainty):
-        super().__init__()
-        self.pass_args(interactions)
+    def __init__(self, scores, uncertainty):
         self.scores = scores
         self.uncertainty = uncertainty
 
-    @property
-    def is_uncertain(self):
-        return True
+    def predict(self, user_ids, item_ids):
+        return self.scores.predict(user_ids, item_ids), self.uncertainty.predict(user_ids, item_ids)
 
-    def predict(self, user_id):
-        scores = self.scores.predict(user_id)
-        uncertainty = self.uncertainty.predict(user_id)
-        return scores, uncertainty
-
-
-class ItemPopularity(Recommender):
-
-    def __init__(self, interactions):
-        super().__init__()
-        self.pass_args(interactions)
-        self.item_popularity = interactions.get_item_popularity()
-
-    @property
-    def is_uncertain(self):
-        return False
-
-    def predict(self, user_id):
-        return self.item_popularity
-
-
-class UserProfileLength(Recommender):
-
-    def __init__(self, interactions):
-        super().__init__()
-        self.pass_args(interactions)
-        self.user_profile = interactions.get_user_profile_length()
-
-    @property
-    def is_uncertain(self):
-        return False
-
-    def predict(self, user_id):
-        return self.user_profile[torch.full(self.num_items, user_id)]
-
-
-class ItemVariance(Recommender):
-
-    def __init__(self, interactions):
-        super().__init__()
-        self.pass_args(interactions)
-        self.item_variance = interactions.get_item_variance()
-
-    @property
-    def is_uncertain(self):
-        return False
-
-    def predict(self, user_id):
-        return self.item_variance
+    def predict_user(self, user):
+        return self.scores.predict_user(user), self.uncertainty.predict_user(user)
