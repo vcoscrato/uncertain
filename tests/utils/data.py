@@ -42,7 +42,7 @@ class MovieLens(LightningDataModule):
         # Download
         if not os.path.isfile(path):
 
-            url = 'https://github.com/maciejkula/recommender_datasets/releases/download/v0.2.0/movielens_1M.hdf5'
+            url = 'https://github.com/maciejkula/recommender_datasets/releases/download/v0.2.0/movielens_20M.hdf5'
             req = requests.get(url, stream=True)
             with open(path, 'wb') as f:
                 for chunk in req.iter_content(chunk_size=2 ** 20):
