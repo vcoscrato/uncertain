@@ -2,6 +2,32 @@ import numpy as np
 from uncertain.core import UncertainRecommender
 
 
+class UserHeuristic(UncertainRecommender):
+
+    def __init__(self, base_MF, uncertainty):
+        self.MF = base_MF
+        self.uncertainty = uncertainty
+
+    def predict(self, user_ids, item_ids):
+        return self.MF.predict(user_ids, item_ids), self.uncertainty[user_ids]
+
+    def predict_user(self, user):
+        return self.MF.predict_user(user), np.full(self.MF.n_item, self.uncertainty[user])
+
+
+class ItemHeuristic(UncertainRecommender):
+
+    def __init__(self, base_MF, uncertainty):
+        self.MF = base_MF
+        self.uncertainty = uncertainty
+
+    def predict(self, user_ids, item_ids):
+        return self.MF.predict(user_ids, item_ids), self.uncertainty[item_ids]
+
+    def predict_user(self, user):
+        return self.MF.predict_user(user), self.uncertainty
+
+
 class Ensemble(UncertainRecommender):
 
     def __init__(self, models):

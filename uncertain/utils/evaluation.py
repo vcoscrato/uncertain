@@ -6,6 +6,7 @@ from matplotlib import pyplot as plt
 from sklearn.model_selection import KFold
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
+from sklearn.metrics.pairwise import cosine_distances
 
 
 def rpi_score(errors, uncertainties):
@@ -59,6 +60,7 @@ def test_recommendations(model, data, max_k=10):
     predictions = model.predict(torch.tensor(data.test[:, 0]).long(), torch.tensor(data.test[:, 1]).long())
     rating_metrics = {}
     if type(predictions) == tuple:
+        metrics['Uncertainty'] = np.zeros((data.n_user, max_k*5))
         metrics['RRI'] = np.zeros((data.n_user, max_k)) * np.NaN
         avg_unc, std_unc = predictions[1].mean(), predictions[1].std()
         if not data.implicit:
@@ -81,12 +83,13 @@ def test_recommendations(model, data, max_k=10):
         if not n_target:
             continue
 
-        rated = data.train[:, 1][data.train[:, 0] == user].astype('int')
+        rated = data.train_val.item[data.train_val.user == user].to_numpy()
         rec = model.recommend(user, remove_items=rated, n=data.n_item-len(rated))
         hits = rec.index[:max_k].isin(targets)
         n_hit = hits.cumsum(0)
-        with torch.no_grad():
-            rec_distance = (1 - data.item_similarity[rec.index[:max_k]]) / 2
+
+        if hasattr(rec, 'uncertainties'):
+            metrics['Uncertainty'][user] = rec.uncertainties[:max_k*5]
         '''
         # AUC
         targets_pos = sorted([rec.index.get_loc(i) for i in targets])
@@ -95,7 +98,7 @@ def test_recommendations(model, data, max_k=10):
         metrics['AUC'] = sum(n_after_target) / (len(n_after_target) * n_negative)
         '''
         # Diversity
-        distance = np.triu(rec_distance[:, rec.index[:max_k]], 1)
+        distance = np.triu(cosine_distances(data.csr[rec.index[:max_k]]), 1)
         metrics['Diversity'][user] = np.diag(distance.cumsum(0).cumsum(1), 1) / diversity_denom
 
         if hits.sum() > 0:
@@ -116,7 +119,8 @@ def test_recommendations(model, data, max_k=10):
                 metrics['RRI'][user] = unc.cumsum(0) / precision_denom
 
             # Expected surprise (novelty)
-            metrics['Novelty'][user] = (rec_distance[:, rated].min(1) * hits).cumsum(0) / hits.cumsum(0)
+            distance = cosine_distances(data.csr[rec.index[:max_k]], data.csr[rated])
+            metrics['Novelty'][user] = (distance.min(1) * hits).cumsum(0) / hits.cumsum(0)
 
     return {**rating_metrics, **{key: np.nanmean(value, 0) for key, value in metrics.items()}}
 

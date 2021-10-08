@@ -13,5 +13,6 @@ class LitProgressBar(ProgressBar):
 def train(model, data):
     prog_bar = LitProgressBar()
     es = EarlyStopping(monitor='val_loss', min_delta=0, patience=4, verbose=False, mode='min')
-    trainer = Trainer(gpus=1, max_epochs=50, logger=False, callbacks=[prog_bar, es], checkpoint_callback=False)
+    trainer = Trainer(gpus=1, max_epochs=100, logger=False, callbacks=[prog_bar, es], checkpoint_callback=False)
     trainer.fit(model, datamodule=data)
+    return es.best_score
