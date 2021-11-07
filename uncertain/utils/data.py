@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 from scipy.sparse import csr_matrix
 from torch.utils.data import DataLoader
@@ -6,7 +7,7 @@ from pytorch_lightning import LightningDataModule
 
 class Data(LightningDataModule):
 
-    def __init__(self, data, implicit=False, batch_size=512):
+    def __init__(self, data, implicit=False, batch_size=int(1e5)):
         super().__init__()
         self.implicit = implicit
         self.batch_size = batch_size
@@ -31,7 +32,12 @@ class Data(LightningDataModule):
         # Split
         test = data.groupby('user').tail(4)
         self.train_val = data.drop(index=test.index)
-        self.csr = csr_matrix((self.train_val.score, (self.train_val.item, self.train_val.user)))
+        if self.implicit:
+            self.csr = csr_matrix((np.ones_like(self.train_val.user), (self.train_val.item, self.train_val.user)),
+                                  shape=(self.n_item, self.n_user))
+        else:
+            self.csr = csr_matrix((self.train_val.score, (self.train_val.item, self.train_val.user)),
+                                  shape=(self.n_item, self.n_user))
         val = self.train_val.groupby('user').tail(4)
         self.train = self.train_val.drop(index=val.index).to_numpy()
         self.test = test.to_numpy()
@@ -50,6 +56,3 @@ class Data(LightningDataModule):
 
     def val_dataloader(self):
         return DataLoader(self.val, self.batch_size, drop_last=False, shuffle=False, num_workers=8)
-
-    def test_dataloader(self):
-        return DataLoader(self.test, self.batch_size, drop_last=False, shuffle=False, num_workers=8)

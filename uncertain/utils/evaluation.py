@@ -98,7 +98,7 @@ def test_recommendations(model, data, max_k=10):
         metrics['AUC'] = sum(n_after_target) / (len(n_after_target) * n_negative)
         '''
         # Diversity
-        distance = np.triu(cosine_distances(data.csr[rec.index[:max_k]]), 1)
+        distance = np.triu(cosine_distances(data.csr[rec.index[:max_k]]), 1) / 2
         metrics['Diversity'][user] = np.diag(distance.cumsum(0).cumsum(1), 1) / diversity_denom
 
         if hits.sum() > 0:
@@ -119,7 +119,7 @@ def test_recommendations(model, data, max_k=10):
                 metrics['RRI'][user] = unc.cumsum(0) / precision_denom
 
             # Expected surprise (novelty)
-            distance = cosine_distances(data.csr[rec.index[:max_k]], data.csr[rated])
+            distance = cosine_distances(data.csr[rec.index[:max_k]], data.csr[rated]) / 2
             metrics['Novelty'][user] = (distance.min(1) * hits).cumsum(0) / hits.cumsum(0)
 
     return {**rating_metrics, **{key: np.nanmean(value, 0) for key, value in metrics.items()}}
