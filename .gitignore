@@ -1,7 +1,5 @@
 **/.idea
 **/.ipynb_checkpoints
 **/__pycache__
-Legacy/
-Examples/
 tests/data.csv
 tests/Movielens/*
