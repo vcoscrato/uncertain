@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-from .core import FactorizationModel, VanillaRecommender, UncertainRecommender
+from .core import BiasModel, FactorizationModel, VanillaRecommender, UncertainRecommender
 
 
 def mse(predicted, observed):
@@ -17,7 +17,6 @@ class Explicit:
     def training_step(self, batch, batch_idx):
         output = self.forward(batch[:, 0].long(), batch[:, 1].long())
         loss = self.loss_func(output, batch[:, 2])
-        self.log('train_loss', loss / batch.shape[0])
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -26,21 +25,23 @@ class Explicit:
         self.log('val_loss', loss / batch.shape[0], prog_bar=True)
 
 
+class Bias(Explicit, BiasModel, VanillaRecommender):
+
+    def __init__(self, n_user, n_item, lr):
+        super().__init__(n_user, n_item, lr)
+
+
 class MF(Explicit, FactorizationModel, VanillaRecommender):
 
     def __init__(self, n_user, n_item, embedding_dim, lr, weight_decay):
-        super().__init__(n_user, n_item, embedding_dim, lr, weight_decay, mse)
+        super().__init__(n_user, n_item, embedding_dim, lr, weight_decay, **dict(loss_func=mse))
 
 
 class CPMF(Explicit, FactorizationModel, UncertainRecommender):
 
-    def __init__(self, n_user, n_item, embedding_dim, lr, weight_decay_MF, weight_decay_gammas):
-        super().__init__(n_user, n_item, embedding_dim, lr, weight_decay_MF, gaussian)
-        self.init_gammas()
-        self.weight_decay_MF = weight_decay_MF
-        self.weight_decay_gammas = weight_decay_gammas
-
-    def init_gammas(self):
+    def __init__(self, n_user, n_item, embedding_dim, lr, weight_decay, lr_var=0):
+        kwargs = dict(loss_func=gaussian, lr_var=lr_var)
+        super().__init__(n_user, n_item, embedding_dim, lr, weight_decay, **kwargs)
         self.user_gammas = torch.nn.Embedding(self.n_user, 1)
         self.item_gammas = torch.nn.Embedding(self.n_item, 1)
         torch.nn.init.constant_(self.user_gammas.weight, 1)
@@ -48,11 +49,11 @@ class CPMF(Explicit, FactorizationModel, UncertainRecommender):
         self.var_activation = torch.nn.Softplus()
 
     def configure_optimizers(self):
-        params = [{'params': self.user_embeddings.parameters(), 'weight_decay': self.weight_decay_MF},
-                  {'params': self.item_embeddings.parameters(), 'weight_decay': self.weight_decay_MF},
-                  {'params': self.user_gammas.parameters(), 'weight_decay': self.weight_decay_gammas},
-                  {'params': self.item_gammas.parameters(), 'weight_decay': self.weight_decay_gammas}]
-        return torch.optim.SGD(params, lr=self.lr, momentum=0.9)
+        params = [{'params': self.user_embeddings.parameters(), 'lr': self.lr, 'weight_decay': self.weight_decay},
+                  {'params': self.item_embeddings.parameters(), 'lr': self.lr, 'weight_decay': self.weight_decay},
+                  {'params': self.user_gammas.parameters(), 'lr': self.lr_var},
+                  {'params': self.item_gammas.parameters(), 'lr': self.lr_var}]
+        return torch.optim.SGD(params, momentum=0.9)
 
     def forward(self, user_ids, item_ids):
         mean = self.dot(user_ids, item_ids)
@@ -77,29 +78,25 @@ class CPMF(Explicit, FactorizationModel, UncertainRecommender):
 
 class OrdRec(Explicit, FactorizationModel, UncertainRecommender):
 
-    def __init__(self, n_user, n_item, score_labels, embedding_dim, lr, weight_decay_MF, weight_decay_step):
-        super().__init__(n_user, n_item, embedding_dim, lr, weight_decay_MF)
-        self.score_labels = score_labels
-        self.init_step()
-        self.weight_decay_MF = weight_decay_MF
-        self.weight_decay_step = weight_decay_step
-
-    def init_step(self):
+    def __init__(self, n_user, n_item, score_labels, embedding_dim, lr=None, weight_decay=None, lr_step=None):
+        kwargs = dict(score_labels=score_labels, lr_step=lr_step)
+        super().__init__(n_user, n_item, embedding_dim, lr, weight_decay, **kwargs)
         self.user_step = torch.nn.Embedding(self.n_user, len(self.score_labels) - 1)
-        self.item_step = torch.nn.Embedding(self.n_item, len(self.score_labels) - 1)
         torch.nn.init.constant_(self.user_step.weight, 0)
-        torch.nn.init.constant_(self.item_step.weight, 0)
+        # self.item_step = torch.nn.Embedding(self.n_item, len(self.score_labels) - 1)
+        # torch.nn.init.constant_(self.item_step.weight, 0)
 
     def configure_optimizers(self):
-        params = [{'params': self.user_embeddings.parameters(), 'weight_decay': self.weight_decay_MF},
-                  {'params': self.item_embeddings.parameters(), 'weight_decay': self.weight_decay_MF},
-                  {'params': self.user_step.parameters(), 'weight_decay': self.weight_decay_step},
-                  {'params': self.item_step.parameters(), 'weight_decay': self.weight_decay_step}]
-        return torch.optim.SGD(params, lr=self.lr, momentum=0.9)
+        params = [{'params': self.user_embeddings.parameters(), 'weight_decay': self.weight_decay, 'lr': self.lr},
+                  {'params': self.item_embeddings.parameters(), 'weight_decay': self.weight_decay, 'lr': self.lr},
+                  {'params': self.user_step.parameters(), 'lr': self.lr_step}]
+        # {'params': self.item_step.parameters(), 'weight_decay': self.weight_decay_step}
+        return torch.optim.SGD(params, momentum=0.9)
 
     def forward(self, user_ids, item_ids):
         y = self.dot(user_ids, item_ids).reshape(-1, 1)
-        steps = torch.exp(self.user_step(user_ids) + self.item_step(item_ids)).cumsum(1)
+        steps = torch.exp(self.user_step(user_ids)).cumsum(1)
+        # steps = torch.exp(self.user_step(user_ids) + self.item_step(item_ids)).cumsum(1)
         distribution = torch.sigmoid(steps - y)
         one = torch.ones((len(distribution), 1), device=distribution.device)
         distribution = torch.cat((distribution, one), 1)
@@ -123,7 +120,8 @@ class OrdRec(Explicit, FactorizationModel, UncertainRecommender):
     def predict_user(self, user):
         with torch.no_grad():
             y = (self.user_embeddings(user) * self.item_embeddings.weight).sum(1).reshape(-1, 1)
-            steps = torch.exp(self.user_step(user) + self.item_step.weight).cumsum(1)
+            steps = torch.exp(self.user_step(user)).cumsum(0)
+            # steps = torch.exp(self.user_step(user) + self.item_step.weight).cumsum(1)
             distributions = torch.sigmoid(steps - y)
             one = torch.ones((len(distributions), 1), device=distributions.device)
             distributions = torch.cat((distributions, one), 1)
@@ -133,11 +131,10 @@ class OrdRec(Explicit, FactorizationModel, UncertainRecommender):
 
 class BeMF(Explicit, FactorizationModel, UncertainRecommender):
 
-    def __init__(self, n_user, n_item, score_labels, embedding_dim, lr, weight_decay):
-        self.score_labels = score_labels
-        self.n_scores = len(score_labels)
-        super().__init__(n_user, n_item, embedding_dim * self.n_scores, lr, weight_decay)
-        self.embedding_dim = int(self.embedding_dim / self.n_scores)
+    def __init__(self, n_user, n_item, score_labels, embedding_dim, lr=None, weight_decay=None):
+        kwargs = dict(score_labels=score_labels, n_scores=len(score_labels))
+        super().__init__(n_user, n_item, embedding_dim, lr, weight_decay, **kwargs)
+        self.embedding_dim = int(embedding_dim / self.n_scores)
         self.sigmoid = torch.nn.Sigmoid()
         self.softmax = torch.nn.Softmax(dim=1)
         torch.nn.init.uniform_(self.user_embeddings.weight)
@@ -149,7 +146,7 @@ class BeMF(Explicit, FactorizationModel, UncertainRecommender):
         return (user_embeddings * item_embeddings).view(len(user_ids), self.embedding_dim, self.n_scores).sum(1)
 
     def forward(self, user_ids, item_ids):
-        return self.sigmoid(self.dot(user_ids, item_ids))
+        return self.softmax(self.sigmoid(self.dot(user_ids, item_ids)))
 
     @staticmethod
     def loss_func(predicted, observed):
@@ -159,7 +156,7 @@ class BeMF(Explicit, FactorizationModel, UncertainRecommender):
 
     def predict(self, user_ids, item_ids):
         with torch.no_grad():
-            pred = self.softmax(self(user_ids, item_ids)).max(1)
+            pred = self(user_ids, item_ids).max(1)
             return self.score_labels[pred.indices], 1 - pred.values.numpy()
 
     def predict_user(self, user):

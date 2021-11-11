@@ -4,9 +4,45 @@ from numpy import column_stack
 from pytorch_lightning import LightningModule
 
 
+class BiasModel(LightningModule):
+
+    def __init__(self, n_user, n_item, lr):
+        super().__init__()
+        self.n_user = n_user
+        self.n_item = n_item
+        self.lr = lr
+        self.user_bias = torch.nn.Embedding(self.n_user, 1)
+        self.item_bias = torch.nn.Embedding(self.n_item, 1)
+        torch.nn.init.normal_(self.user_bias.weight, mean=0, std=0.01)
+        torch.nn.init.normal_(self.item_bias.weight, mean=0, std=0.01)
+        self.save_hyperparameters()
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.SGD(self.parameters(), lr=self.lr, momentum=0.9)
+        return optimizer
+
+    def forward(self, user_ids, item_ids):
+        user_bias = self.user_bias(user_ids)
+        item_bias = self.item_bias(item_ids)
+        return (user_bias + item_bias).flatten()
+
+    @staticmethod
+    def loss_func(predicted, observed):
+        return ((observed - predicted) ** 2).sum()
+
+    def predict(self, user_ids, item_ids):
+        with torch.no_grad():
+            return self(user_ids, item_ids).numpy()
+
+    def predict_user(self, user):
+        with torch.no_grad():
+            user_bias = self.user_bias(user)
+            return (user_bias + self.item_bias.weight).flatten().numpy()
+
+
 class FactorizationModel(LightningModule):
 
-    def __init__(self, n_user, n_item, embedding_dim, lr, weight_decay, loss_func=None, n_negative=None):
+    def __init__(self, n_user, n_item, embedding_dim, lr, weight_decay, **kwargs):
         super().__init__()
         self.n_user = n_user
         self.n_item = n_item
@@ -17,10 +53,9 @@ class FactorizationModel(LightningModule):
         self.item_embeddings = torch.nn.Embedding(self.n_item, self.embedding_dim)
         torch.nn.init.normal_(self.user_embeddings.weight, mean=0, std=0.01)
         torch.nn.init.normal_(self.item_embeddings.weight, mean=0, std=0.01)
-        if loss_func is not None:
-            self.loss_func = loss_func
-        if n_negative is not None:
-            self.n_negative = n_negative
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+        self.save_hyperparameters()
 
     def configure_optimizers(self):
         optimizer = torch.optim.SGD(self.parameters(), lr=self.lr, weight_decay=self.weight_decay, momentum=0.9)

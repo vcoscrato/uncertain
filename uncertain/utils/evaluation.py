@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 from scipy.special import comb
 from matplotlib import pyplot as plt
 from sklearn.model_selection import KFold
@@ -77,7 +78,7 @@ def test_recommendations(model, data, max_k=10):
     precision_denom = np.arange(1, max_k + 1)
     ndcg_denom = np.log2(np.arange(2, max_k+2))
 
-    for user in range(data.n_user):
+    for user in tqdm(range(data.n_user)):
         targets = data.test[:, 1][data.test[:, 0] == user]
         n_target = len(targets)
         if not n_target:

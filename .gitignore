@@ -3,5 +3,5 @@
 **/__pycache__
 Legacy/
 Examples/
-tests/data/*
-tests/fitted/*
+tests/data.csv
+tests/Movielens/*
