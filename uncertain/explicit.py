@@ -167,10 +167,65 @@ class BeMF(Explicit, FactorizationModel, UncertainRecommender):
             return self.score_labels[pred.indices], 1 - pred.values.numpy()
 
 
+'''
+class BMF(Explicit, FactorizationModel, VanillaRecommender):
+
+    def __init__(self, n_user, n_item, embedding_dim, lr, weight_decay):
+        super().__init__(n_user, n_item, embedding_dim, lr, weight_decay)
+
+    @staticmethod
+    def loss_func(predicted, observed):
+        return - predicted[observed.bool()].log().sum() - (1 - predicted[~observed.bool()]).log().sum()
+
+    def forward(self, user_ids, item_ids):
+        return self.dot(user_ids, item_ids).sigmoid()
+
+    def predict_user(self, user):
+        with torch.no_grad():
+            user_embedding = self.user_embeddings(user)
+            return (user_embedding * self.item_embeddings.weight).sum(1)
+
+
+class BeMF(UncertainRecommender):
+
+    def __init__(self, n_user, n_item, score_labels, embedding_dim, lr=None, weight_decay=None):
+        super().__init__()
+        self.n_user = n_user
+        self.n_item = n_item
+        self.score_labels = score_labels
+        self.n_scores = len(score_labels)
+        self.models = [BMF(n_user, n_item, embedding_dim, lr, weight_decay) for _ in range(self.n_scores)]
+        self.softmax = torch.nn.Softmax(dim=1)
+
+    def _summarize(self, distributions):
+        mean = (distributions * self.score_labels).sum(1)
+        var = torch.sqrt((distributions * self.score_labels ** 2).sum(1) - mean ** 2)
+        return mean.numpy(), var.numpy()
+
+    def predict(self, user_ids, item_ids):
+        with torch.no_grad():
+            preds = []
+            for model in self.models:
+                preds.append(model(user_ids, item_ids))
+            dist = self.softmax(torch.vstack(preds).T) # .max(1)
+            # return self.score_labels[dist.indices], 1 - dist.values.numpy()
+            return self._summarize(dist)
+
+    def predict_user(self, user):
+        with torch.no_grad():
+            preds = []
+            for model in self.models:
+                preds.append(model.predict_user(user))
+            dist = self.softmax(torch.vstack(preds).T) # .max(1)
+            # return self.score_labels[dist.indices], 1 - dist.values.numpy()
+            return self._summarize(dist)
+'''
+
+
 class GMF(Explicit, FactorizationModel, VanillaRecommender):
 
     def __init__(self, n_user, n_item, embedding_dim, lr):
-        super().__init__(n_user, n_item, embedding_dim, lr, 0, mse)
+        super().__init__(n_user, n_item, embedding_dim, lr, 0, **dict(loss_func=mse))
         self.linear = torch.nn.Linear(self.embedding_dim, 1, bias=False)
         torch.nn.init.normal_(self.linear.weight, mean=0, std=0.01)
 

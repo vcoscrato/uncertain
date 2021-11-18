@@ -12,14 +12,14 @@ class LitProgressBar(ProgressBar):
 
 class Checkpoint(ModelCheckpoint):
     def __init__(self, filename):
-        super().__init__(monitor='val_loss', filename = filename)
+        super().__init__(monitor='val_loss', filename=filename)
 
 
 def train(model, data, path, name):
     prog_bar = LitProgressBar()
     es = EarlyStopping(monitor='val_loss', min_delta=0.0001, patience=5, verbose=False, mode='min')
     cp = ModelCheckpoint(dirpath=path, filename=name+'-{epoch}-{val_loss:.4f}', monitor='val_loss')
-    trainer = Trainer(gpus=1, max_epochs=200, logger=False, callbacks=[prog_bar, es, cp])
+    trainer = Trainer(gpus=1, min_epochs=20, max_epochs=200, logger=False, callbacks=[prog_bar, es, cp])
     trainer.fit(model, datamodule=data)
 
 
