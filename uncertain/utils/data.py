@@ -7,7 +7,7 @@ from pytorch_lightning import LightningDataModule
 
 class Data(LightningDataModule):
 
-    def __init__(self, data, implicit=False, batch_size=int(1e5)):
+    def __init__(self, data, test_ratio=0.2, val_ratio=0.1, implicit=False, batch_size=int(1e5)):
         super().__init__()
         self.implicit = implicit
         self.batch_size = batch_size
@@ -17,9 +17,13 @@ class Data(LightningDataModule):
         if self.implicit:
             data = data[data.score >= 4].drop('score', 1)
 
-        # Remove users with profile < 12 (minimum 4 train, 4 val and 4 test instances)
+        # Drop user with too small profile
         length = data.user.value_counts().drop(columns='timestamps')
-        data.drop(data.index[data.user.isin(length.index[length <= 12])], 0, inplace=True)
+        data.drop(data.index[data.user.isin(length.index[length <= 5])], 0, inplace=True)
+
+        # Drop items with < 5 ratings
+        length = data.item.value_counts()
+        data.drop(data.index[data.item.isin(length.index[length < 5])], 0, inplace=True)
 
         # Make sure user and item ids are consecutive integers
         data.user = data.user.factorize()[0]
@@ -30,7 +34,7 @@ class Data(LightningDataModule):
         self.n_item = data.item.nunique()
 
         # Split
-        test = data.groupby('user').tail(4)
+        test = data.groupby('user').apply(lambda x: x.tail(int(test_ratio * len(x)))).reset_index(level=0, drop=True)
         self.train_val = data.drop(index=test.index)
         if self.implicit:
             self.csr = csr_matrix((np.ones_like(self.train_val.user), (self.train_val.item, self.train_val.user)),
@@ -38,14 +42,14 @@ class Data(LightningDataModule):
         else:
             self.csr = csr_matrix((self.train_val.score, (self.train_val.item, self.train_val.user)),
                                   shape=(self.n_item, self.n_user))
-        val = self.train_val.groupby('user').tail(4)
+        val = self.train_val.groupby('user').apply(lambda x: x.tail(int(val_ratio * len(x)))).reset_index(level=0, drop=True)
         self.train = self.train_val.drop(index=val.index).to_numpy()
         self.test = test.to_numpy()
         self.val = val.to_numpy()
 
         # Finish
         print(f'MovieLens data prepared: {self.n_user} users, {self.n_item} items.')
-        print(f'{len(self.train)} Train interactions, {len(self.val)} validation and test interactions.')
+        print(f'{len(self.train)} train, {len(self.val)} validation and {len(self.test)} test interactions.')
 
     def to_ordinal(self):
         self.train[:, 2], self.score_labels = pd.factorize(self.train[:, 2], sort=True)
