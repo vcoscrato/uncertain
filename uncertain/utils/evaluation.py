@@ -86,15 +86,17 @@ def test_recommendations(user, index, hits, cache, out):
 
     # Diversity
     inner_distances = np.triu(cosine_distances(cache['csr'][index]), 1) / 2
-    out['Diversity'][user] = np.diag(inner_distances.cumsum(0).cumsum(1), 1) / cache['diversity_denom']
+    diversity_at_k = np.diag(inner_distances.cumsum(0).cumsum(1), 1)
+    if len(diversity_at_k) > 0:
+        out['Diversity'][user][:len(index)-1] = diversity_at_k / (cache['diversity_denom'][:len(index)-1])
 
     if n_hit[-1] > 0:
         # Accuracy
-        out['Precision'][user] = n_hit / cache['precision_denom']
-        out['Recall'][user] = n_hit / cache['n_target']
+        out['Precision'][user][:len(index)] = n_hit / cache['precision_denom'][:len(index)]
+        out['Recall'][user][:len(index)] = n_hit / cache['n_target']
 
         # NDCG
-        dcg = (hits / cache['ndcg_denom']).cumsum(0)
+        dcg = (hits / cache['ndcg_denom'][:len(index)]).cumsum(0)
         for k in range(len(index)):
             if dcg[k] > 0:
                 idcg = np.sum(np.sort(hits[:k + 1]) / cache['ndcg_denom'][:k + 1])
@@ -102,7 +104,7 @@ def test_recommendations(user, index, hits, cache, out):
 
         # Expected surprise
         profile_distances = cosine_distances(cache['csr'][index], cache['csr_rated']) / 2
-        out['Expected surprise'][user] = (profile_distances.min(1) * hits).cumsum(0) / hits.cumsum(0)
+        out['Expected surprise'][user][:len(index)] = (profile_distances.min(1) * hits).cumsum(0) / hits.cumsum(0)
 
 
 def test(model, data, name, threshold=4, max_k=10, use_baseline=False):
