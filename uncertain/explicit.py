@@ -118,7 +118,7 @@ class OrdRec(Explicit, FactorizationModel, UncertainRecommender):
 
     def _summarize(self, distributions):
         mean = (distributions * self.score_labels).sum(1)
-        var = torch.sqrt((distributions * self.score_labels ** 2).sum(1) - mean ** 2)
+        var = (distributions * self.score_labels ** 2).sum(1) - mean ** 2
         return mean.numpy(), var.numpy()
 
     def predict(self, user_ids, item_ids):
@@ -141,11 +141,13 @@ class OrdRec(Explicit, FactorizationModel, UncertainRecommender):
         with torch.no_grad():
             y = (self.user_embeddings(user) * self.item_embeddings.weight).sum(1).reshape(-1, 1)
             steps = torch.exp(self.user_step(user)).cumsum(0)
+            # steps = torch.exp(self.user_step(user) + self.item_step.weight).cumsum(1)
             distributions = torch.sigmoid(steps - y)
             one = torch.ones((len(distributions), 1), device=distributions.device)
             distributions = torch.cat((distributions, one), 1)
             distributions[:, 1:] -= distributions[:, :-1].clone()
-            return distributions[:, self.score_labels >= threshold].sum(1)
+            unc = self._summarize(distributions)[1]
+            return distributions[:, self.score_labels >= threshold].sum(1).numpy()
 
 
 class BeMF(Explicit, FactorizationModel, UncertainRecommender):
@@ -162,7 +164,7 @@ class BeMF(Explicit, FactorizationModel, UncertainRecommender):
     def dot(self, user_ids, item_ids):
         user_embeddings = self.user_embeddings(user_ids)
         item_embeddings = self.item_embeddings(item_ids)
-        return (user_embeddings * item_embeddings).view(len(user_ids), self.embedding_dim, self.n_scores).sum(1)
+        return (user_embeddings * item_embeddings).view(len(user_ids), self.n_scores, self.embedding_dim).sum(2)
 
     def forward(self, user_ids, item_ids):
         return self.softmax(self.sigmoid(self.dot(user_ids, item_ids)))
@@ -178,19 +180,12 @@ class BeMF(Explicit, FactorizationModel, UncertainRecommender):
             pred = self(user_ids, item_ids).max(1)
             return self.score_labels[pred.indices], 1 - pred.values.numpy()
 
-    def predict_user(self, user):
+    def predict_user(self, user, threshold=4):
         with torch.no_grad():
             user_embeddings = self.user_embeddings(user)
-            dot = (user_embeddings * self.item_embeddings.weight).view(self.n_item, self.embedding_dim, self.n_scores)
-            pred = self.softmax(self.sigmoid(dot.sum(1))).max(1)
-            return self.score_labels[pred.indices], 1 - pred.values.numpy()
-
-    def uncertain_predict_user(self, user, threshold):
-        with torch.no_grad():
-            user_embeddings = self.user_embeddings(user)
-            dot = (user_embeddings * self.item_embeddings.weight).view(self.n_item, self.embedding_dim, self.n_scores)
-            distributions = self.softmax(self.sigmoid(dot.sum(1)))
-            return distributions[:, self.score_labels >= threshold].sum(1)
+            dot = (user_embeddings * self.item_embeddings.weight).view(self.n_item, self.n_scores, self.embedding_dim)
+            distributions = self.softmax(self.sigmoid(dot.sum(2)))
+            return distributions[:, self.score_labels >= threshold].sum(1), 1 - distributions.max(1).values.numpy()
 
 
 '''

@@ -1,5 +1,6 @@
 import numpy as np
 from uncertain.core import UncertainRecommender
+from scipy.stats import norm
 
 
 class UserHeuristic(UncertainRecommender):
@@ -53,6 +54,14 @@ class Ensemble(UncertainRecommender):
         uncertainties = predictions.std(1)
         return scores, uncertainties
 
+    def uncertain_predict_user(self, user, threshold):
+        predictions = np.empty((self.models[0].n_item, len(self.models)))
+        for idx, model in enumerate(self.models):
+            predictions[:, idx] = model.predict_user(user)
+        scores = predictions.mean(1)
+        uncertainties = predictions.std(1)
+        return norm.sf(threshold, scores, uncertainties)
+
 
 class Resample(UncertainRecommender):
 
@@ -101,3 +110,6 @@ class UncertainWrapper(UncertainRecommender):
 
     def predict_user(self, user):
         return self.scores.predict_user(user), self.uncertainty.predict_user(user)
+
+    def uncertain_predict_user(self, user, threshold):
+        return norm.sf(threshold, self.scores.predict_user(user), self.uncertainty.predict_user(user))
