@@ -99,7 +99,7 @@ class UncertainRecommender:
         out = out.sort_values(by='scores', ascending=False)[:n]
         return out
 
-    def uncertain_recommend(self, user, threshold, remove_items=None, n=10):
+    def uncertain_recommend(self, user, threshold=None, remove_items=None, n=10):
         out = DataFrame(self.uncertain_predict_user(torch.tensor(user), threshold), columns=['scores'])
         if remove_items is not None:
             out.loc[remove_items, 'scores'] = -float('inf')

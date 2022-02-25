@@ -2,6 +2,7 @@ import numpy as np
 from tqdm import tqdm
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint, TQDMProgressBar, EarlyStopping
+import optuna
 
 
 class LitProgressBar(TQDMProgressBar):
