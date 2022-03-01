@@ -153,4 +153,13 @@ def test(model, data, name, max_k, use_baseline=False):
     return 'Success!'
         
     
-        
+def unc_distribution(model):
+    f, ax = plt.subplots(ncols=2)
+    preds = model.predict(data.rand['users'], data.rand['items'])
+    ax[0].hist(preds[1])
+    ax[0].set_xlabel('Uncertainty')
+    ax[0].set_ylabel('Density')
+    ax[1].plot(preds[0], preds[1], 'o')
+    ax[1].set_xlabel('Score')
+    ax[1].set_ylabel('Uncertainty')
+    f.tight_layout()

@@ -47,13 +47,13 @@ class Implicit:
 class logMF(Implicit, FactorizationModel, VanillaRecommender):
 
     def __init__(self, n_user, n_item, embedding_dim, lr, weight_decay, n_negative):
-        super().__init__(n_user, n_item, embedding_dim, lr, weight_decay, cross_entropy, n_negative)
+        super().__init__(n_user, n_item, embedding_dim, lr, weight_decay, **dict(loss_func=cross_entropy, n_negative=n_negative))
 
 
 class CAMF(Implicit, FactorizationModel, UncertainRecommender):
 
     def __init__(self, n_user, n_item, embedding_dim, lr, weight_decay, n_negative):
-        super().__init__(n_user, n_item, embedding_dim, lr, weight_decay, None, n_negative)
+        super().__init__(n_user, n_item, embedding_dim, lr, weight_decay, **dict(n_negative=n_negative))
         self.linear = torch.nn.Linear(embedding_dim, 2, bias=False)
         torch.nn.init.normal_(self.linear.weight, mean=1, std=0.01)
         self.activation = torch.nn.Softplus()
@@ -64,7 +64,8 @@ class CAMF(Implicit, FactorizationModel, UncertainRecommender):
         params = [{'params': self.user_embeddings.parameters(), 'weight_decay': self.weight_decay},
                   {'params': self.item_embeddings.parameters(), 'weight_decay': self.weight_decay},
                   {'params': self.linear.parameters(), 'weight_decay': 0}]
-        return torch.optim.Adam(params, lr=self.lr)
+        return torch.optim.SGD(params, lr=self.lr, momentum=0.9)
+        # return torch.optim.Adam(params, lr=self.lr)
 
     def forward(self, user_ids, item_ids):
         user_embedding = self.user_embeddings(user_ids)
@@ -109,7 +110,7 @@ class CAMF(Implicit, FactorizationModel, UncertainRecommender):
         else:
             return loss.mean()
         '''
-        return - loss.log().mean()
+        return - loss.log().sum()
 
 
 class GMF(Implicit, FactorizationModel, VanillaRecommender):

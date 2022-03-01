@@ -10,7 +10,7 @@ from sklearn.metrics.pairwise import cosine_distances
 
 class Data(LightningDataModule):
 
-    def __init__(self, data, users_on_test, test_ratio=0.2, val_ratio=0.1, implicit=False, batch_size=int(1e5), distances=True):
+    def __init__(self, data, users_on_test=None, test_ratio=0.2, val_ratio=0.1, implicit=False, batch_size=int(1e5), distances=True):
         super().__init__()
         self.implicit = implicit
         self.batch_size = batch_size
@@ -20,14 +20,14 @@ class Data(LightningDataModule):
         if self.implicit:
             if hasattr(data, 'score'):
                 data = data[data.score >= 4].drop('score', 1)
-
-        # Drop user with too small profile
-        length = data.user.value_counts().drop(columns='timestamps')
-        data.drop(data.index[data.user.isin(length.index[length <= 5])], 0, inplace=True)
-
+                
         # Drop items with < 5 ratings
         length = data.item.value_counts()
         data.drop(data.index[data.item.isin(length.index[length < 5])], 0, inplace=True)
+
+        # Drop user with < 10 ratings
+        length = data.user.value_counts().drop(columns='timestamps')
+        data.drop(data.index[data.user.isin(length.index[length < 10])], 0, inplace=True)
 
         # Make sure user and item ids are consecutive integers
         data.user = data.user.factorize()[0]
@@ -36,6 +36,9 @@ class Data(LightningDataModule):
         # Shapes
         self.n_user = data.user.nunique()
         self.n_item = data.item.nunique()
+        
+        if users_on_test is None:
+            users_on_test = self.n_user
 
         # Split
         rng = np.random.default_rng(0)
@@ -84,8 +87,14 @@ class Data(LightningDataModule):
                      'items': torch.randint(0, self.n_item, (1000000,), generator=g_cpu)}
 
         # Finish
-        print(f'MovieLens data prepared: {self.n_user} users, {self.n_item} items.')
+        print(f'Data prepared: {self.n_user} users, {self.n_item} items.')
         print(f'{len(self.train)} train, {len(self.val)} validation and {len(self.test)} test interactions.')
+        
+    def merge_train_val(self):
+        self.train = self.train_val.to_numpy()
+        
+    def split_train_val(self):
+        self.train = self.train_val.drop(index=val.index).to_numpy()
 
     def to_ordinal(self):
         self.train[:, 2], self.score_labels = pd.factorize(self.train[:, 2], sort=True)
