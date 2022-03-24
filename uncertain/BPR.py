@@ -120,7 +120,7 @@ class TwoWayMF(UncertainBPR):
                   {'params': self.item_embeddings.parameters(), 'lr': self.lr, 'weight_decay': self.weight_decay},
                   {'params': self.user_embeddings_rho.parameters(), 'lr': self.lr*10, 'weight_decay': self.weight_decay},
                   {'params': self.item_embeddings_rho.parameters(), 'lr': self.lr*10, 'weight_decay': self.weight_decay},]
-        return torch.optim.SGD(params, momentum=0.9)
+        return torch.optim.Adam(params)
 
     def forward(self, user_ids, item_ids):
         user_embedding_rho = self.user_embeddings_rho(user_ids)

@@ -18,7 +18,7 @@ class BiasModel(LightningModule):
         self.save_hyperparameters()
 
     def configure_optimizers(self):
-        optimizer = torch.optim.SGD(self.parameters(), lr=self.lr, momentum=0.9)
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
         return optimizer
 
     def forward(self, user_ids, item_ids):
@@ -58,7 +58,7 @@ class FactorizationModel(LightningModule):
         self.save_hyperparameters()
 
     def configure_optimizers(self):
-        optimizer = torch.optim.SGD(self.parameters(), lr=self.lr, weight_decay=self.weight_decay, momentum=0.9)
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
         return optimizer
 
     def dot(self, user_ids, item_ids):

@@ -1,28 +1,16 @@
 import math
 import torch
 import numpy as np
+from pandas import DataFrame
 from scipy.stats import beta
 from .core import FactorizationModel, VanillaRecommender, UncertainRecommender
 
 
-def cross_entropy(positive, negative):
-    return - torch.cat((positive.sigmoid(), 1 - negative.sigmoid())).log().mean()
-
-
-def bpr(positive, negative):
-    return - (positive - negative).sigmoid().log().mean()
-
-
-def abpr(positive, negative):
-    x = positive[0] - negative[0]
-    rho = positive[1] + negative[1]
-    return torch.sigmoid(x / rho).log().mean()
-
-
-def gpr(positive, negative):
-    x = positive[0] - negative[0]
-    rho = positive[1] + negative[1]
-    return (0.5 * (1 + torch.erf((x / torch.sqrt(2 * rho))))).log().mean()
+def cross_entropy(positive, negative=None):
+    if negative is None:
+        return - positive.sigmoid().log().mean()
+    else:
+        return - torch.cat((positive.sigmoid(), 1 - negative.sigmoid())).log().mean()
 
 
 class Implicit:
@@ -39,20 +27,32 @@ class Implicit:
         return loss
 
     def validation_step(self, batch, batch_idx):
-        output = self.forward(batch[:, 0], batch[:, 1])
-        loss = self.loss_func(output, self.get_negative_prediction(batch[:, 0]))
-        self.log('val_loss', loss, prog_bar=True)
-
+        user, rated, targets = batch
+        rec = self._val_pred(user)
+        rec[rated] = -float('inf')
+        _, rec = torch.sort(rec, descending=True)
+        hits = torch.isin(rec[:5], targets, assume_unique=True)
+        n_hits = hits.cumsum(0)
+        if n_hits[-1] > 0:
+            precision = n_hits / torch.arange(1, 6, device=n_hits.device)
+            self.log('val_MAP', torch.sum(precision * hits) / n_hits[-1], prog_bar=True)
+        else:
+            self.log('val_MAP', torch.tensor(0, dtype=torch.float32), prog_bar=True)
+        
 
 class logMF(Implicit, FactorizationModel, VanillaRecommender):
 
-    def __init__(self, n_user, n_item, embedding_dim, lr, weight_decay, n_negative):
+    def __init__(self, n_user, n_item, embedding_dim, lr, weight_decay, n_negative=1):
         super().__init__(n_user, n_item, embedding_dim, lr, weight_decay, **dict(loss_func=cross_entropy, n_negative=n_negative))
-
+        
+    def _val_pred(self, user):
+        user_embedding = self.user_embeddings(user)
+        return (user_embedding * self.item_embeddings.weight).sum(1)
+        
 
 class CAMF(Implicit, FactorizationModel, UncertainRecommender):
 
-    def __init__(self, n_user, n_item, embedding_dim, lr, weight_decay, n_negative):
+    def __init__(self, n_user, n_item, embedding_dim, lr, weight_decay, n_negative=1):
         super().__init__(n_user, n_item, embedding_dim, lr, weight_decay, **dict(n_negative=n_negative))
         self.linear = torch.nn.Linear(embedding_dim, 2, bias=False)
         torch.nn.init.normal_(self.linear.weight, mean=1, std=0.01)
@@ -64,8 +64,7 @@ class CAMF(Implicit, FactorizationModel, UncertainRecommender):
         params = [{'params': self.user_embeddings.parameters(), 'weight_decay': self.weight_decay},
                   {'params': self.item_embeddings.parameters(), 'weight_decay': self.weight_decay},
                   {'params': self.linear.parameters(), 'weight_decay': 0}]
-        return torch.optim.SGD(params, lr=self.lr, momentum=0.9)
-        # return torch.optim.Adam(params, lr=self.lr)
+        return torch.optim.Adam(params, lr=self.lr)
 
     def forward(self, user_ids, item_ids):
         user_embedding = self.user_embeddings(user_ids)
@@ -87,6 +86,12 @@ class CAMF(Implicit, FactorizationModel, UncertainRecommender):
             alpha_beta = self.activation(self.linear(dot))
             return self.expectation(alpha_beta).numpy(), self.variance(alpha_beta).numpy()
 
+    def _val_pred(self, user):
+        user_embedding = self.user_embeddings(user)
+        dot = user_embedding * self.item_embeddings.weight
+        alpha_beta = self.activation(self.linear(dot))
+        return self.expectation(alpha_beta)
+        
     @staticmethod
     def expectation(alpha_beta):
         return torch.divide(alpha_beta[:, 0], alpha_beta.sum(1)).flatten()
@@ -110,12 +115,12 @@ class CAMF(Implicit, FactorizationModel, UncertainRecommender):
         else:
             return loss.mean()
         '''
-        return - loss.log().sum()
+        return - loss.log().mean()
 
 
 class GMF(Implicit, FactorizationModel, VanillaRecommender):
 
-    def __init__(self, n_user, n_item, embedding_dim, lr, n_negative):
+    def __init__(self, n_user, n_item, embedding_dim, lr, n_negative=1):
         super().__init__(n_user, n_item, embedding_dim, lr, 0, cross_entropy, n_negative)
         self.init_net()
 
@@ -137,10 +142,14 @@ class GMF(Implicit, FactorizationModel, VanillaRecommender):
             user_embedding = self.user_embeddings(user)
             return self.linear(user_embedding * self.item_embeddings.weight).numpy()
 
+    def _val_pred(self, user):
+        user_embedding = self.user_embeddings(user)
+        return self.linear(user_embedding * self.item_embeddings.weight)
+        
 
 class MLP(Implicit, FactorizationModel, VanillaRecommender):
 
-    def __init__(self, n_user, n_item, embedding_dim, lr, n_negative):
+    def __init__(self, n_user, n_item, embedding_dim, lr, n_negative=1):
         super().__init__(n_user, n_item, embedding_dim, lr, 0, cross_entropy, n_negative)
         self.init_net()
 
@@ -168,44 +177,7 @@ class MLP(Implicit, FactorizationModel, VanillaRecommender):
             input_embedding = torch.cat((user_embedding, self.item_embeddings.weight), dim=1)
             return self.linear2(self.linear1(self.linear0(input_embedding))).numpy()
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-class BaseMF(FactorizationModel):
-
-    def __init__(self, n_user, n_item, embedding_dim, lr, weight_decay):
-        super().__init__(n_user, n_item, embedding_dim, lr, weight_decay)
-
-    def dot(self, user_ids, item_ids):
-        user_embedding = self.user_embeddings(user_ids)
-        item_embedding = self.item_embeddings(item_ids)
-        return (user_embedding * item_embedding).sum(1)
-
-
-class blabla(BaseMF):
-
-    def __init__(self, n_user, n_item, embedding_dim, lr, weight_decay, compose, init_value):
-        super().__init__(n_user, n_item, embedding_dim, lr, weight_decay)
-        self.user_gammas = torch.nn.Embedding(self.n_user, 1)
-        self.item_gammas = torch.nn.Embedding(self.n_item, 1)
-        torch.nn.init.constant_(self.user_gammas.weight, init_value)
-        torch.nn.init.constant_(self.item_gammas.weight, init_value)
-        self.unc_activation = torch.nn.Softplus()
-        self.compose = compose
-
-    def unc(self, user_ids, item_ids):
-        user_gamma = self.user_gammas(user_ids)
-        item_gamma = self.item_gammas(item_ids)
-        return self.unc_activation(self.compose(user_gamma, item_gamma)).flatten()
-
+    def _val_pred(self, user):
+        user_embedding = self.user_embeddings(user).expand(self.n_item, self.embedding_dim)
+        input_embedding = torch.cat((user_embedding, self.item_embeddings.weight), dim=1)
+        return self.linear2(self.linear1(self.linear0(input_embedding)))

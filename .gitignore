@@ -3,3 +3,6 @@
 **/__pycache__
 tests/data.csv
 tests/Movielens/*
+tests/ML_implicit/*
+tests/Behance/*
+tests/RetailRocket/*

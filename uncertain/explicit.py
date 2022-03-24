@@ -185,7 +185,8 @@ class BeMF(Explicit, FactorizationModel, UncertainRecommender):
             user_embeddings = self.user_embeddings(user)
             dot = (user_embeddings * self.item_embeddings.weight).view(self.n_item, self.n_scores, self.embedding_dim)
             distributions = self.softmax(self.sigmoid(dot.sum(2)))
-            return distributions[:, self.score_labels >= threshold].sum(1), 1 - distributions.max(1).values.numpy()
+            probs = distributions[:, self.score_labels >= threshold].sum(1).numpy()
+            return probs, 1 - probs
 
 
 '''
