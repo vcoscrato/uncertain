@@ -11,6 +11,19 @@ from sklearn.linear_model import LogisticRegression
 from uncertain.core import VanillaRecommender, UncertainRecommender
 
 
+def get_AP(hits):
+    n_hits = hits.cumsum(0)
+    if n_hits[-1] > 0:
+        precision = n_hits / np.arange(1, len(hits) + 1)
+        return np.sum(precision * hits) / n_hits[-1]
+    else:
+        return 0
+
+
+def rmse(errors):
+    return np.sqrt(np.square(errors).mean())
+
+
 def rpi_score(errors, uncertainties):
     mae = errors.mean()
     errors_deviations = errors - mae
@@ -42,130 +55,142 @@ def quantile_score(errors, uncertainties):
     return q_rmse
 
 
-def test_ratings(model, data, use_baseline, out):
-    predictions = model.predict(torch.tensor(data.test[:, 0]).long(), torch.tensor(data.test[:, 1]).long())
-    if not isinstance(model, UncertainRecommender) and not use_baseline:
-        predictions = predictions[~np.isnan(predictions)]
-        out['RMSE'] = np.sqrt(np.square(predictions - data.test[:, 2]).mean())
+def accuracy_metrics(size, max_k, is_uncertain):
+    out = {'MAP': np.zeros((size, max_k)),
+           'Recall': np.zeros((size, max_k))}
+    if is_uncertain:
+        out['URI_rec'] = np.full(size, np.nan)
+    return out
+
+
+def test(model, data, max_k, name):
+
+    metrics = {}
+    Rating_rec = accuracy_metrics(len(data.test_users), max_k, isinstance(model, UncertainRecommender))
+
+    pred = model.predict(torch.tensor(data.test[:, 0]).long(), torch.tensor(data.test[:, 1]).long())
+    if not isinstance(model, UncertainRecommender):
+        pred = pred[~np.isnan(pred)]
+        metrics['RMSE'] = rmse(pred - data.test[:, 2])
     if isinstance(model, UncertainRecommender):
-        idx = ~np.isnan(predictions[1])
-        pred = predictions[0][idx]
-        unc = predictions[1][idx]
-        if not use_baseline:
-            out['RMSE'] = np.sqrt(np.square(pred - data.test[:, 2]).mean())
-        out['avg_unc'], out['std_unc'] = unc.mean(), unc.std()
+        idx = ~np.isnan(pred[1])
+        unc = pred[1][idx]
+        pred = pred[0][idx]
         errors = np.abs(data.test[:, 2] - pred)
-        out['RPI'] = rpi_score(errors, unc)
-        out['Classification'] = classification(errors, unc)
-        out['Quantile RMSE'] = quantile_score(errors, unc)
+        metrics['RMSE'] = np.sqrt(np.square(errors).mean())
+        metrics['RPI'] = rpi_score(errors, unc)
+        metrics['Classification'] = classification(errors, unc)
+        metrics['Quantile RMSE'] = quantile_score(errors, unc)
+        URI_rat = {'test': {'avg': unc.mean(), 'std': unc.std()},
+                   'rec': {'hits': 0, 'hits_unc': 0,
+                           'avg': np.zeros(len(data.test_users))}}
 
+        rand_preds = model.predict(data.rand['users'], data.rand['items'])
+        user_vars = data.user.loc[data.rand['users']]
+        item_vars = data.item.loc[data.rand['items']]
+        metrics['User_unc_corr'] = {column: np.corrcoef(rand_preds[1], user_vars[column].to_numpy().flatten())[0, 1]
+                                    for column in data.user.columns}
+        metrics['Item_unc_corr'] = {column: np.corrcoef(rand_preds[1], item_vars[column].to_numpy().flatten())[0, 1]
+                                    for column in data.item.columns}
+        metrics['Pred_unc_corr'] = np.corrcoef(rand_preds[0], rand_preds[1])[0, 1]
 
-def accuracy_metrics(data, max_k):
-    return {'Precision': np.zeros((data.n_user, max_k)),
-            'Recall': np.zeros((data.n_user, max_k)),
-            'NDCG': np.zeros((data.n_user, max_k)),
-            'Diversity': np.zeros((data.n_user, max_k - 1)) * np.NaN,
-            'Surprise': np.zeros((data.n_user, max_k))}
+        Cuts = {'Values': np.quantile(rand_preds[1], np.linspace(0.8, 0.2, 4)),
+                'Coverage': np.zeros(len(data.test_users)),
+                'MAP': np.zeros((len(data.test_users), 5)),
+                'Surprise': np.zeros((len(data.test_users), 5))}
 
+    if hasattr(model, 'uncertain_predict_user'):
+        Uncertain_rec = accuracy_metrics(len(data.test_users), max_k, False)
+        unc = 1 - model.uncertain_predict(torch.tensor(data.test[:, 0]).long(), torch.tensor(data.test[:, 1]).long(),
+                                          threshold=4)
+        URI_unc = {'test': {'avg': unc.mean(), 'std': unc.std()},
+                   'rec': {'hits': 0, 'hits_unc': 0,
+                           'avg': np.zeros(len(data.test_users))}}
 
-def test_recommendations(user, index, hits, cache, out):
-    n_hit = hits.cumsum(0)
+    precision_denom = np.arange(1, max_k + 1)
 
-    # Diversity
-    diversity_at_k = np.diag(np.triu(cache['distances'][index][:, index], 1).cumsum(0).cumsum(1), 1)
-    if len(diversity_at_k) > 0:
-        out['Diversity'][user][:len(index) - 1] = diversity_at_k / (cache['diversity_denom'][:len(index) - 1])
-
-    if n_hit[-1] > 0:
-        # Accuracy
-        out['Precision'][user][:len(index)] = n_hit / cache['precision_denom'][:len(index)]
-        out['Recall'][user][:len(index)] = n_hit / cache['n_target']
-
-        # NDCG
-        dcg = (hits / cache['ndcg_denom'][:len(index)]).cumsum(0)
-        for k in range(len(index)):
-            if dcg[k] > 0:
-                idcg = np.sum(np.sort(hits[:k + 1]) / cache['ndcg_denom'][:k + 1])
-                out['NDCG'][user][k] = dcg[k] / idcg
-
-        # Surprise
-        profile_distances = cache['distances'][index][:, cache['rated']]
-        out['Surprise'][user][:len(index)] = (profile_distances.min(1)).cumsum(0) / cache['precision_denom'][:len(index)]
-
-
-def test(model, data, name, threshold=4, max_k=10, use_baseline=False, ratings_only=False):
-    metrics = {'ratings': {}}
-    test_ratings(model, data, use_baseline, metrics['ratings'])
-    if ratings_only:
-        return metrics
-
-    if not use_baseline:
-        metrics['accuracy'] = accuracy_metrics(data, max_k)
-
-    if isinstance(model, UncertainRecommender):
-        preds = model.predict(data.rand['users'], data.rand['items'])
-        quantiles = np.linspace(0.8, 0.2, 4)
-        cuts = np.quantile(preds[1], quantiles)
-        metrics['uncertainty'] = {'quantiles': quantiles, 'cut_values': cuts, 'preds': preds,
-                                  'RRI': np.zeros((data.n_user, max_k)) * np.NaN}
-        metrics['cuts'] = [{**accuracy_metrics(data, max_k), **{'Coverage': np.ones((data.n_user, 1))}}
-                           for _ in range(len(quantiles))]
-
-        if hasattr(model, 'uncertain_predict_user'):
-            metrics['uncertain_accuracy'] = accuracy_metrics(data, max_k)
-
-    cache = {'precision_denom': np.arange(1, max_k + 1),
-             'ndcg_denom': np.log2(np.arange(2, max_k + 2)),
-             'diversity_denom': np.arange(1, max_k).cumsum(0),
-             'distances': data.distances}
-
-    for user in tqdm(data.test_users):
-        targets = data.test[data.test[:, 0] == user]
-        targets = targets[targets[:, 2] >= threshold, 1]
-        cache['n_target'] = len(targets)
-        if not cache['n_target']:
-            continue
-        cache['rated'] = data.train_val.item[data.train_val.user == user].to_numpy()
-
-        rec = model.recommend(user, remove_items=cache['rated'], n=data.n_item - len(cache['rated']))
+    for idxu, user in enumerate(tqdm(data.test_users, desc=name+' - Recommending')):
+        targets = data.test[data.test[:, 0] == user, 1]
+        rated = data.train_val.item[data.train_val.user == user].to_numpy()
+        rec = model.recommend(user, remove_items=rated, n=data.n_item - len(rated))
         top_k = rec[:max_k]
         hits = top_k.index.isin(targets)
+        n_hits = hits.cumsum(0)
 
-        if not use_baseline:
-            test_recommendations(user, top_k.index, hits, cache, metrics['accuracy'])
+        if n_hits[-1] > 0:
+            precision = n_hits / precision_denom
+            Rating_rec['MAP'][idxu] = np.cumsum(precision * hits) / np.maximum(1, n_hits)
+            Rating_rec['Recall'][idxu] = n_hits / len(targets)
 
         if isinstance(model, UncertainRecommender):
-            # RRI
-            unc = (metrics['ratings']['avg_unc'] - top_k.uncertainties) / metrics['ratings']['std_unc'] * hits
-            metrics['uncertainty']['RRI'][user] = unc.cumsum(0) / cache['precision_denom']
+            unc = rec.uncertainties.to_numpy()
+            top_k_unc = unc[:max_k]
+            URI_rat['rec']['avg'][idxu] = top_k_unc.mean()
+            hits_unc = np.sum(top_k_unc * hits)
+            URI_rat['rec']['hits'] += n_hits[-1]
+            URI_rat['rec']['hits_unc'] += hits_unc
+            if n_hits[-1] > 0:
+                avg_hits_unc = hits_unc / n_hits[-1]
+                Rating_rec['URI_rec'][idxu] = (URI_rat['rec']['avg'][idxu] - avg_hits_unc) / top_k_unc.std()
 
-            for idx in range(len(metrics['uncertainty']['quantiles'])):
-                top_k_constrained = rec[rec.uncertainties < metrics['uncertainty']['cut_values'][idx]][:max_k]
-                n_rec = len(top_k_constrained)
-                if n_rec:
-                    hits = top_k_constrained.index.isin(targets)
-                    test_recommendations(user, top_k_constrained.index, hits, cache, metrics['cuts'][idx])
-                    if n_rec < max_k:
-                        metrics['cuts'][idx]['Coverage'][user] = 0
+            profile_distances = data.distances[top_k.index][:, rated]
+            Cuts['Surprise'][idxu, 0] = profile_distances.min(1).sum(0) / max_k
+
+            Cuts['MAP'][idxu, 0] = Rating_rec['MAP'][idxu][-1]
+            for idxc, cut in enumerate(Cuts['Values']):
+                if np.sum(top_k_unc < cut) == len(top_k_unc):
+                    Cuts['MAP'][idxu, idxc + 1] = Cuts['MAP'][idxu, idxc]
+                    Cuts['Surprise'][idxu, idxc + 1] = Cuts['Surprise'][idxu, idxc]
+                else:
+                    top_k_constrained = rec[unc < cut][:max_k]
+                    top_k_unc = top_k_constrained.uncertainties.to_numpy()
+                    Cuts['Coverage'][idxu] = len(top_k_unc) / max_k
+                    if len(top_k_constrained > 0):
+                        Cuts['MAP'][idxu, idxc + 1] = get_AP(top_k_constrained.index.isin(targets))
+                        profile_distances = data.distances[top_k_constrained.index][:, rated]
+                        Cuts['Surprise'][idxu, idxc + 1] = profile_distances.min(1).sum(0) / len(top_k_constrained)
 
         if hasattr(model, 'uncertain_predict_user'):
-            rec = model.uncertain_recommend(user, threshold=threshold, remove_items=cache['rated'],
-                                            n=data.n_item - len(cache['rated']))
-            top_k = rec[:max_k]
-            hits = top_k.index.isin(targets)
-            test_recommendations(user, top_k.index, hits, cache, metrics['uncertain_accuracy'])
+            top_k_unc = model.uncertain_recommend(user, threshold=4, remove_items=rated, n=max_k)
+            top_k_unc_unc = 1 - top_k_unc.scores.to_numpy()
+            URI_unc['rec']['avg'][idxu] = top_k_unc_unc.mean()
+            if np.sum(top_k_unc.index.to_numpy() == top_k.index.to_numpy()) == max_k:
+                Uncertain_rec['MAP'][idxu] = Rating_rec['MAP'][idxu]
+                Uncertain_rec['Recall'][idxu] = Rating_rec['Recall'][idxu]
+            else:
+                hits = top_k_unc.index.isin(targets)
+                n_hits = hits.cumsum(0)
+            URI_unc['rec']['hits'] += n_hits[-1]
+            URI_unc['rec']['hits_unc'] += np.sum(top_k_unc_unc * hits)
 
-    if not use_baseline:
-        metrics['accuracy'] = {key: np.nanmean(value, 0) for key, value in metrics['accuracy'].items()}
+            if n_hits[-1] > 0:
+                precision = n_hits / precision_denom
+                Uncertain_rec['MAP'][idxu] = np.cumsum(precision * hits) / np.maximum(1, n_hits)
+                Uncertain_rec['Recall'][idxu] = n_hits / len(targets)
+
+    metrics['Rating_rec'] = {'MAP': np.mean(Rating_rec['MAP'], 0),
+                             'Recall': np.mean(Rating_rec['Recall'], 0)}
+
     if isinstance(model, UncertainRecommender):
-        metrics['uncertainty']['RRI'] = np.nanmean(metrics['uncertainty']['RRI'], 0)
-        for idx in range(len(metrics['uncertainty']['quantiles'])):
-            metrics['cuts'][idx] = {key: np.nanmean(value, 0) for key, value in metrics['cuts'][idx].items()}
-        if hasattr(model, 'uncertain_predict_user'):
-            metrics['uncertain_accuracy'] = {key: np.nanmean(value, 0) for key, value in
-                                             metrics['uncertain_accuracy'].items()}
+        avg_unc_hits = URI_rat['rec']['hits_unc'] / URI_rat['rec']['hits']
+        metrics['Rating_rec']['URI_global'] = (URI_rat['test']['avg'] - avg_unc_hits) / URI_rat['test']['std']
+        metrics['Rating_rec']['Unc_MAP_corr'] = np.corrcoef(Rating_rec['MAP'][:, -1], URI_rat['rec']['avg'])[0, 1]
+        metrics['Rating_rec']['URI_rec'] = np.nanmean(Rating_rec['URI_rec'])
 
-    with open('results/' + name + '.pkl', 'wb') as f:
-        pickle.dump(metrics, file=f)
+        metrics['Cuts'] = {'Values': Cuts['Values'],
+                           'Coverage': Cuts['Coverage'].mean(),
+                           'MAP': Cuts['MAP'].mean(0),
+                           'Surprise': Cuts['Surprise'].mean(0)}
 
-    return 'Success!'
+    if hasattr(model, 'uncertain_predict_user'):
+        metrics['Uncertain_rec'] = {'MAP': np.mean(Uncertain_rec['MAP'], 0),
+                                    'Recall': np.mean(Uncertain_rec['Recall'], 0)}
+        avg_unc_hits = URI_unc['rec']['hits_unc'] / URI_unc['rec']['hits']
+        metrics['Uncertain_rec']['URI_global'] = (URI_unc['test']['avg'] - avg_unc_hits) / URI_unc['test']['std']
+        metrics['Uncertain_rec']['Unc_MAP_corr'] = np.corrcoef(Uncertain_rec['MAP'][:, -1], URI_unc['rec']['avg'])[0, 1]
+
+    if name is not None:
+        with open('results/' + name + '.pkl', 'wb') as f:
+            pickle.dump(metrics, file=f)
+
+    return metrics

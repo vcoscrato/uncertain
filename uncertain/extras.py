@@ -54,6 +54,10 @@ class Ensemble(UncertainRecommender):
         uncertainties = predictions.std(1)
         return scores, uncertainties
 
+    def uncertain_predict(self, user_ids, item_ids, threshold):
+        scores, uncertainties = self.predict(user_ids, item_ids)
+        return norm.sf(threshold, scores, uncertainties)
+
     def uncertain_predict_user(self, user, threshold):
         predictions = np.empty((self.models[0].n_item, len(self.models)))
         for idx, model in enumerate(self.models):
@@ -110,6 +114,10 @@ class UncertainWrapper(UncertainRecommender):
 
     def predict_user(self, user):
         return self.scores.predict_user(user), self.uncertainty.predict_user(user)
+
+    def uncertain_predict(self, user_ids, item_ids, threshold):
+        scores, uncertainties = self.predict(user_ids, item_ids)
+        return norm.sf(threshold, scores, uncertainties)
 
     def uncertain_predict_user(self, user, threshold):
         return norm.sf(threshold, self.scores.predict_user(user), self.uncertainty.predict_user(user))

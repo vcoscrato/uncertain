@@ -38,7 +38,7 @@ def accuracy_metrics(size, max_k, is_uncertain):
     return out
 
 
-def test(model, data, max_k, use_baseline, name):
+def test(model, data, max_k, name):
     
     metrics = {}
     
@@ -50,6 +50,8 @@ def test(model, data, max_k, use_baseline, name):
     if isinstance(model, UncertainRecommender):
         pred, unc = pred[0], pred[1]
         test_avg_unc, test_std_unc = unc.mean(), unc.std()
+        total_hits, total_hits_unc = np.zeros(max_k), np.zeros(max_k)
+        avg_unc = np.zeros((len(data.test_users), max_k))
         
         is_concordant = pred - neg[0] > 0
         metrics['Rating prediction'] = {'FCP': is_concordant.sum().item() / len(data.test)}
@@ -82,11 +84,6 @@ def test(model, data, max_k, use_baseline, name):
         Uncertain_rec = accuracy_metrics(len(data.test_users), max_k, True)
         
     precision_denom = np.arange(1, max_k + 1)
-    ndcg_denom = np.log2(np.arange(2, max_k + 2))
-    
-    if isinstance(model, UncertainRecommender):
-        total_hits, total_hits_unc = np.zeros(max_k), np.zeros(max_k)
-        avg_unc = np.zeros((len(data.test_users), max_k))
         
     for idxu, user in enumerate(tqdm(data.test_users, desc='Recommending')):
         targets = data.test[data.test[:, 0] == user, 1]
@@ -100,7 +97,7 @@ def test(model, data, max_k, use_baseline, name):
             precision = n_hits / precision_denom
             Rating_rec['MAP'][idxu] = np.cumsum(precision * hits) / np.maximum(1, n_hits)
             Rating_rec['Recall'][idxu] = n_hits / len(targets)
-                        
+
         if isinstance(model, UncertainRecommender):
             unc = rec.uncertainties.to_numpy()
             top_k_unc = unc[:max_k]

@@ -76,6 +76,11 @@ class CPMF(Explicit, FactorizationModel, UncertainRecommender):
             var = self.var_activation(user_gamma * self.item_gammas.weight).flatten()
             return mean.numpy(), var.numpy()
 
+    def uncertain_predict(self, user_ids, item_ids, threshold):
+        with torch.no_grad():
+            mean, var = self(user_ids, item_ids)
+            return norm.sf(threshold, mean.numpy(), var.numpy())
+
     def uncertain_predict_user(self, user, threshold):
         with torch.no_grad():
             user_embedding = self.user_embeddings(user)
@@ -123,7 +128,7 @@ class OrdRec(Explicit, FactorizationModel, UncertainRecommender):
 
     def predict(self, user_ids, item_ids):
         with torch.no_grad():
-            distributions = self.forward(user_ids, item_ids)
+            distributions = self(user_ids, item_ids)
             return self._summarize(distributions)
 
     def predict_user(self, user):
@@ -137,6 +142,11 @@ class OrdRec(Explicit, FactorizationModel, UncertainRecommender):
             distributions[:, 1:] -= distributions[:, :-1].clone()
             return self._summarize(distributions)
 
+    def uncertain_predict(self, user_ids, item_ids, threshold):
+        with torch.no_grad():
+            distributions = self(user_ids, item_ids)
+            return distributions[:, self.score_labels >= threshold].sum(1).numpy()
+
     def uncertain_predict_user(self, user, threshold):
         with torch.no_grad():
             y = (self.user_embeddings(user) * self.item_embeddings.weight).sum(1).reshape(-1, 1)
@@ -146,7 +156,6 @@ class OrdRec(Explicit, FactorizationModel, UncertainRecommender):
             one = torch.ones((len(distributions), 1), device=distributions.device)
             distributions = torch.cat((distributions, one), 1)
             distributions[:, 1:] -= distributions[:, :-1].clone()
-            unc = self._summarize(distributions)[1]
             return distributions[:, self.score_labels >= threshold].sum(1).numpy()
 
 
@@ -180,13 +189,25 @@ class BeMF(Explicit, FactorizationModel, UncertainRecommender):
             pred = self(user_ids, item_ids).max(1)
             return self.score_labels[pred.indices], 1 - pred.values.numpy()
 
-    def predict_user(self, user, threshold=4):
+    def predict_user(self, user):
         with torch.no_grad():
             user_embeddings = self.user_embeddings(user)
             dot = (user_embeddings * self.item_embeddings.weight).view(self.n_item, self.n_scores, self.embedding_dim)
             distributions = self.softmax(self.sigmoid(dot.sum(2)))
-            probs = distributions[:, self.score_labels >= threshold].sum(1).numpy()
-            return probs, 1 - probs
+            pred = distributions.max(1)
+            return self.score_labels[pred.indices], 1 - pred.values.numpy()
+
+    def uncertain_predict(self, user_ids, item_ids, threshold):
+        with torch.no_grad():
+            distributions = self(user_ids, item_ids)
+            return distributions[:, self.score_labels >= threshold].sum(1).numpy()
+
+    def uncertain_predict_user(self, user, threshold):
+        with torch.no_grad():
+            user_embeddings = self.user_embeddings(user)
+            dot = (user_embeddings * self.item_embeddings.weight).view(self.n_item, self.n_scores, self.embedding_dim)
+            distributions = self.softmax(self.sigmoid(dot.sum(2)))
+            return distributions[:, self.score_labels >= threshold].sum(1).numpy()
 
 
 '''

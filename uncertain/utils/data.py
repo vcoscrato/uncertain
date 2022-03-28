@@ -8,7 +8,7 @@ from pytorch_lightning import LightningDataModule
 from sklearn.metrics.pairwise import cosine_distances
 
 
-class ExplicitData(LightningDataModule):
+class Data(LightningDataModule):
 
     def __init__(self, data, users_on_test=None, test_ratio=0.2, val_ratio=0.2, implicit=False, batch_size=int(1e5), distances=True):
         super().__init__()
