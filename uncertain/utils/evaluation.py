@@ -2,6 +2,7 @@ import torch
 import pickle
 import numpy as np
 import pandas as pd
+from scipy import stats
 from tqdm.auto import tqdm
 from scipy.special import comb
 from matplotlib import pyplot as plt
@@ -81,6 +82,9 @@ def test(model, data, max_k, name):
         metrics['RPI'] = rpi_score(errors, unc)
         metrics['Classification'] = classification(errors, unc)
         metrics['Quantile RMSE'] = quantile_score(errors, unc)
+        metrics['Pearson error x unc'] = stats.pearsonr(errors, unc)[0]
+        metrics['Spearman error x unc'] = stats.spearmanr(errors, unc)[0]
+        metrics['dw'] = metrics['Quantile RMSE'][-1] - metrics['Quantile RMSE'][0]
         URI_rat = {'test': {'avg': unc.mean(), 'std': unc.std()},
                    'rec': {'hits': 0, 'hits_unc': 0,
                            'avg': np.zeros(len(data.test_users))}}
@@ -95,7 +99,7 @@ def test(model, data, max_k, name):
         metrics['Pred_unc_corr'] = np.corrcoef(rand_preds[0], rand_preds[1])[0, 1]
 
         Cuts = {'Values': np.quantile(rand_preds[1], np.linspace(0.8, 0.2, 4)),
-                'Coverage': np.zeros(len(data.test_users)),
+                'Coverage': np.ones((len(data.test_users), 5)),
                 'MAP': np.zeros((len(data.test_users), 5)),
                 'Surprise': np.zeros((len(data.test_users), 5))}
 
@@ -144,7 +148,7 @@ def test(model, data, max_k, name):
                 else:
                     top_k_constrained = rec[unc < cut][:max_k]
                     top_k_unc = top_k_constrained.uncertainties.to_numpy()
-                    Cuts['Coverage'][idxu] = len(top_k_unc) / max_k
+                    Cuts['Coverage'][idxu][idxc + 1] = len(top_k_unc) / max_k
                     if len(top_k_constrained > 0):
                         Cuts['MAP'][idxu, idxc + 1] = get_AP(top_k_constrained.index.isin(targets))
                         profile_distances = data.distances[top_k_constrained.index][:, rated]
@@ -178,9 +182,11 @@ def test(model, data, max_k, name):
         metrics['Rating_rec']['URI_rec'] = np.nanmean(Rating_rec['URI_rec'])
 
         metrics['Cuts'] = {'Values': Cuts['Values'],
-                           'Coverage': Cuts['Coverage'].mean(),
+                           'Coverage': Cuts['Coverage'].mean(0),
                            'MAP': Cuts['MAP'].mean(0),
-                           'Surprise': Cuts['Surprise'].mean(0)}
+                           'Novelty': Cuts['Surprise'].mean(0),
+                           'Map*': np.array([Cuts['MAP'][Cuts['Coverage'][:, k] == 1, k].mean() for k in range(5)]),
+                           'Novelty*': np.array([Cuts['Surprise'][Cuts['Coverage'][:, k] == 1, k].mean() for k in range(5)])}
 
     if hasattr(model, 'uncertain_predict_user'):
         metrics['Uncertain_rec'] = {'MAP': np.mean(Uncertain_rec['MAP'], 0),

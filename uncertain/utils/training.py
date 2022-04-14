@@ -17,7 +17,7 @@ def train(model, data, path, name):
     prog_bar = LitProgressBar()
     es = EarlyStopping(monitor='val_MAP', min_delta=0.0001, patience=3, verbose=False, mode='max')
     cp = ModelCheckpoint(monitor='val_MAP', dirpath=path, filename=name+'-{epoch}-{val_MAP}', mode='max', save_weights_only=True)
-    trainer = Trainer(gpus=1, min_epochs=5, max_epochs=200, logger=False, callbacks=[prog_bar, es, cp], check_val_every_n_epoch=3)
+    trainer = Trainer(gpus=1, min_epochs=5, max_epochs=200, logger=False, callbacks=[prog_bar, es, cp], check_val_every_n_epoch=5)
     trainer.fit(model, datamodule=data)
     return es.best_score.item(), cp.best_model_path
 

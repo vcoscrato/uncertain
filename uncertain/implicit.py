@@ -38,16 +38,16 @@ class Implicit:
             self.log('val_MAP', torch.sum(precision * hits) / n_hits[-1], prog_bar=True)
         else:
             self.log('val_MAP', torch.tensor(0, dtype=torch.float32), prog_bar=True)
+            
+    def _val_pred(self, user):
+        user_embedding = self.user_embeddings(user)
+        return (user_embedding * self.item_embeddings.weight).sum(1)
         
 
 class logMF(Implicit, FactorizationModel, VanillaRecommender):
 
     def __init__(self, n_user, n_item, embedding_dim, lr, weight_decay, n_negative=1):
         super().__init__(n_user, n_item, embedding_dim, lr, weight_decay, **dict(loss_func=cross_entropy, n_negative=n_negative))
-        
-    def _val_pred(self, user):
-        user_embedding = self.user_embeddings(user)
-        return (user_embedding * self.item_embeddings.weight).sum(1)
         
 
 class CAMF(Implicit, FactorizationModel, UncertainRecommender):
