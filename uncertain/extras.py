@@ -64,7 +64,10 @@ class Ensemble(UncertainRecommender):
             predictions[:, idx] = model.predict_user(user)
         scores = predictions.mean(1)
         uncertainties = predictions.std(1)
-        return norm.sf(threshold, scores, uncertainties)
+        if threshold is not None:
+            return norm.sf(threshold, scores, uncertainties)
+        else:
+            return scores - 4*uncertainties
 
 
 class Resample(UncertainRecommender):
@@ -91,6 +94,21 @@ class Resample(UncertainRecommender):
         uncertainties = predictions.std(1)
         return self.MF.predict_user(user), uncertainties
 
+    def uncertain_predict(self, user_ids, item_ids, threshold):
+        scores, uncertainties = self.predict(user_ids, item_ids)
+        return norm.sf(threshold, scores, uncertainties)
+    
+    def uncertain_predict_user(self, user, threshold):
+        predictions = np.empty((self.models[0].n_item, len(self.models)))
+        for idx, model in enumerate(self.models):
+            predictions[:, idx] = model.predict_user(user)
+        uncertainties = predictions.std(1)
+        if threshold is not None:
+            return norm.sf(threshold, self.MF.predict_user(user), uncertainties)
+        else:
+            return scores - 4*uncertainties
+
+    
 
 class UncertainWrapper(UncertainRecommender):
     """

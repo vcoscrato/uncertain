@@ -155,6 +155,7 @@ class ImplicitData(LightningDataModule):
         val_targets.name = 'target'
 
         # Distances
+        '''
         csr = csr_matrix((np.ones_like(train_val.user), (train_val.item, train_val.user)),
                          shape=(self.n_item, self.n_user))
         self.distances = cosine_distances(csr)
@@ -162,6 +163,7 @@ class ImplicitData(LightningDataModule):
         for user in tqdm(range(self.n_user)):
             rated = train_val.item[train_val.user == user].to_numpy()
             self.user_diversity[user] = self.distances[rated][:, rated].sum() / 2 / sum(range(len(rated)))
+        '''
         
         # Heuristic measures
         self.user_support = train_val.groupby('user').size().to_numpy()

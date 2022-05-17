@@ -50,7 +50,7 @@ class GPR(ProbabilisticLoss):
     def get_prob(self, positive, negative):
         x = positive[0] - negative[0]
         rho = positive[1] + negative[1]
-        return 0.5 * (1 + torch.erf((x / torch.sqrt(2*rho))))
+        return 0.5 * (1 + torch.erf(x / torch.sqrt(2*rho)))
 
     
 class bprMF(Implicit, FactorizationModel, VanillaRecommender):
@@ -101,7 +101,7 @@ class biasMF(UncertainBPR):
             user_bias = self.user_bias(user)
             mean = (user_embedding * self.item_embeddings.weight).sum(1).numpy()
             unc = self.rho_activation(user_bias + self.item_bias.weight).flatten().numpy() + self.padding
-            return mean - 2*np.sqrt(unc)
+            return mean - 4*np.sqrt(unc)
 
         
 class TwoWayMF(UncertainBPR):
@@ -146,7 +146,7 @@ class TwoWayMF(UncertainBPR):
             user_embedding_rho = self.user_embeddings_rho(user)
             mean = (user_embedding * self.item_embeddings.weight).sum(1).numpy()
             unc = self.rho_activation((user_embedding_rho * self.item_embeddings_rho.weight).sum(1)).numpy() + self.padding
-            return mean - 2*np.sqrt(unc)
+            return mean - 4*np.sqrt(unc)
 
 
 class bprGMF(UncertainBPR):
@@ -179,7 +179,7 @@ class bprGMF(UncertainBPR):
         with torch.no_grad():
             user_embedding = self.user_embeddings(user)
             out = self.linear(user_embedding * self.item_embeddings.weight)
-            return out[:, 0].numpy() -2*np.sqrt(self.rho_activation(out[:, 1])).numpy()
+            return out[:, 0].numpy() - 4*np.sqrt(self.rho_activation(out[:, 1])).numpy()
 
 
 class bprMLP(UncertainBPR):
@@ -222,4 +222,4 @@ class bprMLP(UncertainBPR):
             user_embedding = self.user_embeddings(user).expand(self.n_item, self.embedding_dim)
             input_embedding = torch.cat((user_embedding, self.item_embeddings.weight), dim=1)
             out = self.linear2(self.linear1(self.linear0(input_embedding)))
-            return out[:, 0].numpy() -2*np.sqrt(self.rho_activation(out[:, 1])).numpy()
+            return out[:, 0].numpy() - 4*np.sqrt(self.rho_activation(out[:, 1])).numpy()

@@ -124,7 +124,7 @@ class OrdRec(Explicit, FactorizationModel, UncertainRecommender):
     def _summarize(self, distributions):
         mean = (distributions * self.score_labels).sum(1)
         var = (distributions * self.score_labels ** 2).sum(1) - mean ** 2
-        return mean.numpy(), var.numpy()
+        return mean.numpy(), np.sqrt(var.numpy())
 
     def predict(self, user_ids, item_ids):
         with torch.no_grad():
