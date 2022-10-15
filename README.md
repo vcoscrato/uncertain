@@ -22,3 +22,6 @@ This project provides pytorch-lightning [:link:](https://github.com/PyTorchLight
     * [Logistic Matrix Factorization (logMF)](https://web.stanford.edu/~rezab/nips2014workshop/submits/logmat.pdf)
     
     * [Bayesian personalized ranking Matrix Factorization (bprMF)](https://arxiv.org/pdf/1205.2618.pdf)
+
+
+==========================================
