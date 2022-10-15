@@ -24,4 +24,6 @@ This project provides pytorch-lightning [:link:](https://github.com/PyTorchLight
     * [Bayesian personalized ranking Matrix Factorization (bprMF)](https://arxiv.org/pdf/1205.2618.pdf)
 
 
-==========================================
+This branch is a historical snapshot of the full project to assist on reproducilibity of the paper "Estimating and Evaluating the Uncertainty of Rating Predictions and Top-n Recommendations in Recommender Systems".
+
+The notebooks to be followed for reproducibility are under tests/Movielens.ipynb and tests/Netflix.ipynb. In order to run the notebooks, the uncertain folder has to be downloaded and loaded as a python package. Due to data redistribution restrictions we are unable to provide the full datasets. Nevertheless, the data preparation function under uncertain/utils/data.py has been seeded accordingly to guarantee reproducibility. For further assistance on reproducing, please contact me by rasing an issue.
