@@ -1,5 +1,5 @@
 import numpy as np
-from uncertain.core import UncertainRecommender
+from uncertain.core import UncertainRecommender, VanillaRecommender
 from scipy.stats import norm
 
 
@@ -38,6 +38,17 @@ class Ensemble(UncertainRecommender):
     def is_uncertain(self):
         return True
 
+    def __call__(self, user_ids, item_ids=None):
+        if item_ids is None:
+            size = self.models[0].n_item
+        else:
+            size = len(item_ids)
+        
+        predictions = np.empty((size, len(self.models)))
+        for idx, model in enumerate(self.models):
+            predictions[:, idx] = model(user_ids, item_ids)
+        return predictions.mean(1), predictions.std(1)
+    
     def predict(self, user_ids, item_ids):
         predictions = np.empty((len(user_ids), len(self.models)))
         for idx, model in enumerate(self.models):

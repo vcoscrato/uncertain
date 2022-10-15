@@ -103,7 +103,7 @@ class GPR(LightningModule, UncertainRecommender):
         self.log('train_likelihood', prob_ij.mean(), prog_bar=True)
         
         # Loss
-        loss = - prob_ij.sum() + penalty
+        loss = - prob_ij.log().sum() + penalty
         self.log('train_loss', loss)
         
         return loss
@@ -129,8 +129,9 @@ class GPR(LightningModule, UncertainRecommender):
         self.log('val_likelihood', prob_ij.mean(), prog_bar=True)
         
         
-        
-        
+    
+    
+########################################################### OLD CODE
     
     
     
