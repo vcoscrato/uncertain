@@ -1,19 +1,18 @@
 import math
 import torch
-from pytorch_lightning import LightningModule
-from ..core import VanillaRecommender, UncertainRecommender
-from .base import BPR, GPR
+from .base import Implicit, BCE, BPR, GBR, GPR
 
 
-class bprMF(BPR):
+class MF(Implicit):
 
-    def __init__(self, n_user, n_item, embedding_dim, lr, weight_decay):
+    def __init__(self, n_user, n_item, embedding_dim, lr, weight_decay, n_negatives=1, loss='BCE'):
         
         super().__init__()
         self.n_user = n_user
         self.n_item = n_item
         self.embedding_dim = embedding_dim
         self.lr = lr
+        self.n_negatives = n_negatives
         if type(weight_decay) is tuple:
             self.weight_decay_user = weight_decay[0]
             self.weight_decay_item = weight_decay[1]
@@ -29,6 +28,10 @@ class bprMF(BPR):
         torch.nn.init.normal_(self.user_embeddings.weight, mean=0, std=0.01)
         torch.nn.init.normal_(self.item_embeddings.weight, mean=0, std=0.01)
         
+        if loss == 'BCE':
+            self.loss = BCE
+        elif loss == 'BPR': 
+            self.loss = BPR
         self.save_hyperparameters()
     
     def get_user_embeddings(self, user_ids):
@@ -36,10 +39,9 @@ class bprMF(BPR):
     
     def get_item_embeddings(self, item_ids=None):
         if item_ids is not None:
-            item_embeddings = self.item_embeddings(item_ids)
+            return self.item_embeddings(item_ids)
         else:
-            item_embeddings = self.item_embeddings.weight
-        return item_embeddings
+            return self.item_embeddings.weight
     
     def interact(self, user_embeddings, item_embeddings):
         return (user_embeddings * item_embeddings).sum(1)
@@ -49,9 +51,68 @@ class bprMF(BPR):
         item_penalty = self.weight_decay_item * (item_embeddings ** 2).sum()
         neg_item_penalty = self.weight_decay_negative * (neg_item_embeddings ** 2).sum()
         return user_penalty + item_penalty + neg_item_penalty
-            
-            
 
+
+class CPMF(Implicit):
+    
+    def __init__(self, n_user, n_item, embedding_dim, lr, weight_decay, n_negatives=1, loss='GBR'):
+        
+        super().__init__()
+        self.n_user = n_user
+        self.n_item = n_item
+        self.embedding_dim = embedding_dim
+        self.lr = lr
+        self.n_negatives = n_negatives
+        if type(weight_decay) is tuple:
+            self.weight_decay_user = weight_decay[0]
+            self.weight_decay_item = weight_decay[1]
+            self.weight_decay_negative = weight_decay[2]
+        else:
+            self.weight_decay_user = weight_decay
+            self.weight_decay_item = weight_decay
+            self.weight_decay_negative = weight_decay
+    
+        # Init embeddings
+        self.user_embeddings = torch.nn.Embedding(self.n_user, self.embedding_dim)
+        self.item_embeddings = torch.nn.Embedding(self.n_item, self.embedding_dim)
+        torch.nn.init.normal_(self.user_embeddings.weight, mean=0, std=0.01)
+        torch.nn.init.normal_(self.item_embeddings.weight, mean=0, std=0.01)
+        self.user_gammas = torch.nn.Embedding(self.n_user, 1)
+        self.item_gammas = torch.nn.Embedding(self.n_item, 1)
+        torch.nn.init.constant_(self.user_gammas.weight, 1)
+        torch.nn.init.constant_(self.item_gammas.weight, 1)
+        self.var_activation = torch.nn.Softplus()
+        
+        if loss == 'GBR':
+            self.loss = GBR
+        elif loss == 'GPR': 
+            self.loss = GPR
+        self.save_hyperparameters()
+    
+    def get_user_embeddings(self, user_ids):
+        return self.user_embeddings(user_ids), self.user_gammas(user_ids)
+    
+    def get_item_embeddings(self, item_ids=None):
+        if item_ids is not None:
+            return self.item_embeddings(item_ids), self.item_gammas(item_ids)
+        else:
+            return self.item_embeddings.weight, self.item_gammas.weight
+    
+    def interact(self, user_embeddings, item_embeddings):
+        user_embeddings, user_gammas = user_embeddings
+        item_embeddings, item_gammas = item_embeddings
+        mean = (user_embeddings * item_embeddings).sum(1).sigmoid()
+        var = self.var_activation(user_gammas * item_gammas).flatten()
+        return mean, var
+    
+    def get_penalty(self, user_embeddings, item_embeddings, neg_item_embeddings):
+        user_penalty = self.weight_decay_user * (user_embeddings[0] ** 2).sum()
+        item_penalty = self.weight_decay_item * (item_embeddings[0] ** 2).sum()
+        neg_item_penalty = self.weight_decay_negative * (neg_item_embeddings[0] ** 2).sum()
+        return user_penalty + item_penalty + neg_item_penalty
+
+    
+'''
 class UncertainMF(GPR):
 
     def __init__(self, n_user, n_item, embedding_dim, lr, weight_decay, embedding_dim_var=None):
@@ -119,10 +180,9 @@ class PretrainedUncertainMF(GPR):
         
         super().__init__()
         self.baseline = baseline
-        '''
-        for param in self.baseline.parameters():
-            param.requires_grad = False
-        '''
+        
+        #for param in self.baseline.parameters():
+        #    param.requires_grad = False
         
         self.n_user = baseline.n_user
         self.n_item = baseline.n_item
@@ -165,3 +225,4 @@ class PretrainedUncertainMF(GPR):
         item_penalty = self.weight_decay_item * (item_embeddings[1] ** 2).sum()
         neg_item_penalty = self.weight_decay_negative * (neg_item_embeddings[1] ** 2).sum()
         return user_penalty + item_penalty + neg_item_penalty
+'''

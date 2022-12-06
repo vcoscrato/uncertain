@@ -1,117 +1,157 @@
 import math
 import torch
-import numpy as np
 from pytorch_lightning import LightningModule
 from ..core import FactorizationModel, VanillaRecommender, UncertainRecommender
-from ..implicit import Implicit
 
 
-class BPR(LightningModule, VanillaRecommender):
-    
-    def __init__(self):
-        super().__init__()
-        
-    def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
-        return optimizer
-    
-    def forward(self, user_ids, item_ids=None):
-        user_embeddings = self.get_user_embeddings(user_ids)
-        item_embeddings = self.get_item_embeddings(item_ids)
-        return self.interact(user_embeddings, item_embeddings)
-    
-    def train_val_step(self, user_ids, item_ids, penalize):
-        # Selecting
-        user_embeddings = self.get_user_embeddings(user_ids)
-        item_embeddings = self.get_item_embeddings(item_ids)
-        
-        neg_item_ids = torch.randint(0, self.n_item, (len(item_ids),), device=item_ids.device)
-        neg_item_embeddings = self.get_item_embeddings(neg_item_ids)
-        
-        # Data likelihood
-        positives = self.interact(user_embeddings, item_embeddings)
-        negatives = self.interact(user_embeddings, neg_item_embeddings)
-        prob_ij = torch.sigmoid(positives - negatives)
-        
-        if penalize:
-            penalty = self.get_penalty(user_embeddings, item_embeddings, neg_item_embeddings)
-            return prob_ij, penalty
-        else:
-            return prob_ij
-    
-    def training_step(self, batch, batch_idx):
-        user_ids, item_ids = batch[:, 0], batch[:, 1]
-        
-        # Likelihood
-        prob_ij, penalty = self.train_val_step(user_ids, item_ids, penalize=True)
-        self.log('train_likelihood', prob_ij.mean(), prog_bar=True)
-
-        # Loss
-        loss = - prob_ij.log().sum() + penalty
-        self.log('train_nll', loss)
-        
-        return loss
-
-    def validation_step(self, batch, batch_idx):
-        user_ids, item_ids = batch[:, 0], batch[:, 1]
-        
-        prob_ij = self.train_val_step(user_ids, item_ids, penalize=False)
-        self.log('val_likelihood', prob_ij.mean(), prog_bar=True)
-
-
-class GPR(LightningModule, UncertainRecommender):
-    
-    def __init__(self):
-        super().__init__()
-        
-    def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
-        return optimizer
-    
-    def forward(self, user_ids, item_ids=None):
-        user_embeddings = self.get_user_embeddings(user_ids)
-        item_embeddings = self.get_item_embeddings(item_ids)
-        return self.interact(user_embeddings, item_embeddings)
-    
-    def train_val_step(self, user_ids, item_ids, penalize):
-        # Selecting
-        user_embeddings = self.get_user_embeddings(user_ids)
-        item_embeddings = self.get_item_embeddings(item_ids)
-        
-        neg_item_ids = torch.randint(0, self.n_item, (len(item_ids),), device=item_ids.device)
-        neg_item_embeddings = self.get_item_embeddings(neg_item_ids)
-        
-        # Data likelihood
-        pos_mean, pos_var = self.interact(user_embeddings, item_embeddings)
-        neg_mean, neg_var = self.interact(user_embeddings, neg_item_embeddings)
-        
-        mean_diff = pos_mean - neg_mean
-        var_sum = pos_var + neg_var
-        prob_ij = 1 - 0.5 * (1 + torch.erf((-mean_diff) * var_sum.sqrt().reciprocal() / math.sqrt(2)))
-
-        if penalize:
-            penalty = self.get_penalty(user_embeddings, item_embeddings, neg_item_embeddings)
-            return prob_ij, penalty
-        else:
-            return prob_ij
-        
-    def training_step(self, batch, batch_idx):
-        user_ids, item_ids = batch[:, 0], batch[:, 1]
-        
-        # Likelihood
-        prob_ij, penalty = self.train_val_step(user_ids, item_ids, penalize=True)
-        self.log('train_likelihood', prob_ij.mean(), prog_bar=True)
-        
-        # Loss
-        loss = - prob_ij.log().sum() + penalty
-        self.log('train_loss', loss)
-        
-        return loss
-    
+def BCE(positive_scores, negative_scores):
     '''
+    Binary cross entropy. Returns the average likelihood and the NLL.
+    '''
+    probs = torch.cat((positive_scores.sigmoid(), 1 - neg_scores.sigmoid()))
+    return probs.mean(), - probs.log().sum()
+
+
+def BPR(positive_scores, negative_scores):
+    '''
+    Bayesian Personalized Ranking. Returns the average likelihood and the NLL.
+    '''
+    probs = torch.sigmoid(positive_scores - negative_scores)
+    return probs.mean(), - probs.log().sum()
+
+
+def GPR(positive_scores, negative_scores):
+    '''
+    Gaussian Pairwise Ranking. Returns the average likelihood and the NLL.
+    '''
+    pos_mean, pos_var = positive_scores
+    neg_mean, neg_var = negative_scores
+    mean_diff = pos_mean - neg_mean
+    var_sum = pos_var + neg_var
+    probs = 1 - 0.5 * (1 + torch.erf((-mean_diff) * var_sum.sqrt().reciprocal() / math.sqrt(2)))
+    return probs.mean(), - probs.log().sum()
+
+
+def GBR(positive_scores, negative_scores):
+    '''
+    Gaussian Binary Ranking. Returns the average likelihood and the NLL.
+    '''
+    pos_mean, pos_var = positive_scores
+    pos_probs = 1 - 0.5 * (1 + torch.erf((0 - pos_mean) * pos_var.sqrt().reciprocal() / math.sqrt(2)))
+    neg_mean, neg_var = negative_scores
+    neg_probs = 1 - 0.5 * (1 + torch.erf((0 - neg_mean) * neg_var.sqrt().reciprocal() / math.sqrt(2)))
+    var_sum = pos_var + neg_var
+    probs = torch.cat((positive_scores, neg_scores))
+    return probs.mean(), - probs.log().sum()
+
+
+class Implicit(LightningModule, VanillaRecommender):
+    
+    def __init__(self):
+        super().__init__()
+        
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
+        return optimizer
+    
+    def forward(self, user_ids, item_ids=None):
+        user_embeddings = self.get_user_embeddings(user_ids)
+        item_embeddings = self.get_item_embeddings(item_ids)
+        return self.interact(user_embeddings, item_embeddings)
+    
+    def training_step(self, batch, batch_idx):
+        user_ids, item_ids = batch[:, 0], batch[:, 1]
+        
+        # Selecting
+        user_embeddings = self.get_user_embeddings(user_ids)
+        item_embeddings = self.get_item_embeddings(item_ids)
+        if self.n_negative == 1 or not hasattr(self, 'n_negative'):
+            neg_user_embeddings = user_embeddings
+            neg_item_ids = torch.randint(0, self.n_item, (len(item_ids),), device=item_ids.device)
+        else:
+            if type(user_embeddings) is tuple:
+                neg_user_embeddings = (user_embeddings[0].repeat(self.n_negatives, 1), 
+                                       user_embeddings[1].repeat(self.n_negatives, 1))
+            else:
+                neg_user_embeddings = user_embeddings.repeat(self.n_negatives, 1)
+            neg_item_ids = torch.randint(0, self.n_item, (len(user_ids) * self.n_negatives,), device=item_ids.device)
+        neg_item_embeddings = self.get_item_embeddings(neg_item_ids)
+        
+        # Data likelihood
+        pos_scores = self.interact(user_embeddings, item_embeddings)
+        neg_scores = self.interact(neg_user_embeddings, neg_item_embeddings)
+        
+        train_likelihood, loss = self.loss(pos_scores, neg_scores)
+        self.log('train_likelihood', train_likelihood, prog_bar=True)
+            
+        # Penalty
+        if hasattr(self, 'get_penalty'):
+            penalty = self.get_penalty(user_embeddings, item_embeddings, neg_item_embeddings)
+            loss += penalty
+            
+        # Loss
+        self.log('train_loss', loss)
+        return loss
+        
     def validation_step(self, batch, batch_idx):
         user, rated, targets = batch
+        rec = self.rank(user, ignored_item_ids=rated[0], top_n=5)[0]
+        hits = torch.isin(rec, targets[0], assume_unique=True)
+        n_hits = hits.cumsum(0)
+        if n_hits[-1] > 0:
+            precision = n_hits / torch.arange(1, 6, device=n_hits.device)
+            self.log('val_MAP', torch.sum(precision * hits) / n_hits[-1], prog_bar=True)
+        else:
+            self.log('val_MAP', torch.tensor(0, dtype=torch.float32), prog_bar=True)
+
+            
+'''       
+class UncertainImplicit(LightningModule, UncertainRecommender):
+    
+    def __init__(self):
+        super().__init__()
         
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
+        return optimizer
+    
+    def forward(self, user_ids, item_ids=None):
+        user_embeddings = self.get_user_embeddings(user_ids)
+        item_embeddings = self.get_item_embeddings(item_ids)
+        return self.interact(user_embeddings, item_embeddings)
+    
+    def training_step(self, batch, batch_idx):
+        user_ids, item_ids = batch[:, 0], batch[:, 1]
+        
+        # Selecting
+        user_embeddings = self.get_user_embeddings(user_ids)
+        item_embeddings = self.get_item_embeddings(item_ids)
+        neg_item_ids = torch.randint(0, self.n_item, (len(user_ids) * self.n_negatives,), device=item_ids.device)
+        neg_item_embeddings = self.get_item_embeddings(neg_item_ids)
+        
+        # Data likelihood
+        pos_prob, pos_unc = self.interact(user_embeddings, item_embeddings)
+        if type(user_embeddings) is tuple:
+            neg_user_embeddings = (user_embeddings[0].repeat(self.n_negatives, 1), 
+                                   user_embeddings[1].repeat(self.n_negatives, 1))
+        else:
+            neg_user_embeddings = user_embeddings.repeat(self.n_negatives, 1)
+        neg_prob, neg_unc = self.interact(neg_user_embeddings, neg_item_embeddings)
+        prob_ij = torch.cat((pos_prob, 1 - neg_prob))
+        self.log('train_likelihood', prob_ij.mean(), prog_bar=True)
+        loss = - prob_ij.log().sum()
+            
+        # Penalty
+        if hasattr(self, 'get_penalty'):
+            penalty = self.get_penalty(user_embeddings, item_embeddings, neg_item_embeddings)
+            loss += penalty
+            
+        # Loss
+        self.log('train_nll', loss)
+        return loss
+        
+    def validation_step(self, batch, batch_idx):
+        user, rated, targets = batch
         rec, _, _ = self.rank(user, ignored_item_ids=rated[0], top_n=5)
         hits = torch.isin(rec, targets[0], assume_unique=True)
         n_hits = hits.cumsum(0)
@@ -120,31 +160,10 @@ class GPR(LightningModule, UncertainRecommender):
             self.log('val_MAP', torch.sum(precision * hits) / n_hits[-1], prog_bar=True)
         else:
             self.log('val_MAP', torch.tensor(0, dtype=torch.float32), prog_bar=True)
-    '''
+'''
             
-    def validation_step(self, batch, batch_idx):
-        user_ids, item_ids = batch[:, 0], batch[:, 1]
-        
-        prob_ij = self.train_val_step(user_ids, item_ids, penalize=False)
-        self.log('val_likelihood', prob_ij.mean(), prog_bar=True)
-        
-        
-    
-    
+            
 ########################################################### OLD CODE
-    
-    
-    
-class bprMF(Implicit, FactorizationModel, VanillaRecommender):
-
-    def __init__(self, n_user, n_item, embedding_dim, lr, weight_decay):
-        super().__init__(n_user, n_item, embedding_dim, lr, weight_decay, **dict(loss_func=BPR(), n_negative=1))
-        
-        
-class UncertainBPR(Implicit, FactorizationModel, UncertainRecommender):
-    
-    def __init__(self, n_user, n_item, embedding_dim, lr, weight_decay, loss):
-        super().__init__(n_user, n_item, embedding_dim, lr, weight_decay, **dict(loss_func=loss, n_negative=1, padding=0))
 
         
 class biasMF(UncertainBPR):

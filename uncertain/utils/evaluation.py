@@ -65,7 +65,9 @@ def accuracy_metrics(size, max_k, is_uncertain):
 
 
 def test(model, data, max_k, name, threshold=4):
-
+    '''
+    Code for explicit data
+    '''
     metrics = {}
     Rating_rec = accuracy_metrics(len(data.test_users), max_k, isinstance(model, UncertainRecommender))
 
@@ -207,4 +209,129 @@ def test(model, data, max_k, name, threshold=4):
         with open('results/' + name + '.pkl', 'wb') as f:
             pickle.dump(metrics, file=f)
 
+    return metrics
+
+
+def test_vanilla(model, data, max_k, name):
+    '''
+    Code for non-uncertainty aware implicit models
+    '''
+    pred = model.predict(data.test[:, 0], data.test[:, 1])
+    neg = model.predict(data.test[:, 0], data.rand['items'])
+    
+    is_concordant = pred - neg > 0
+    metrics = {'FCP': is_concordant.sum().item() / len(data.test)}
+    
+    precision_denom = torch.arange(1, max_k+1)
+    MAP = torch.zeros((data.n_user, max_k))
+    Recall = torch.zeros((data.n_user, max_k))
+
+    for idxu, user in enumerate(tqdm(range(data.n_user), desc=name+' - Recommending')):
+        
+        targets = torch.tensor(data.test[data.test[:, 0] == user, 1])
+        rated_train = torch.tensor(data.train[:, 1][data.train[:, 0] == user])
+        rated_val = torch.tensor(data.val[:, 1][data.val[:, 0] == user])
+        rated = torch.cat([rated_train, rated_val])
+        
+        rec, _ = model.rank(torch.tensor(user), ignored_item_ids=rated, top_n=10)
+        hits = torch.isin(rec, targets, assume_unique=True)
+        n_hits = hits.cumsum(0)
+        
+        if n_hits[-1] > 0:
+            precision = n_hits / precision_denom
+            MAP[idxu] = torch.cumsum(precision * hits, 0) / torch.clamp(n_hits, min=1)
+            Recall[idxu] = n_hits / len(targets)
+
+    metrics['MAP'] = MAP.mean(0).numpy()
+    metrics['Recall'] = Recall.mean(0).numpy()
+    
+    with open('results/' + name + '.pkl', 'wb') as f:
+        pickle.dump(metrics, file=f)
+    
+    return metrics
+
+
+def test_uncertain(model, data, max_k, name):
+    '''
+    Code for uncertainty-aware implicit models
+    '''
+    pred = model.predict(data.test[:, 0], data.test[:, 1])
+    neg = model.predict(data.test[:, 0], data.rand['items'])
+    
+    is_concordant = pred[0] - neg[0] > 0
+    metrics = {'FCP': is_concordant.sum().item() / len(data.test)}
+    
+    rand_preds = model.predict(data.rand['users'], data.rand['items'])
+    metrics['corr_usup'] = stats.spearmanr(rand_preds[1], data.user_support[data.rand['users']].flatten())[0]
+    metrics['corr_isup'] = stats.spearmanr(rand_preds[1], data.item_support[data.rand['items']].flatten())[0]
+    
+    f, ax = plt.subplots(ncols=2)
+    ax[0].hist(rand_preds[1], density=True)
+    ax[0].set_xlabel('Uncertainty')
+    ax[0].set_ylabel('Density')
+    ax[1].plot(rand_preds[0], rand_preds[1], 'o')
+    ax[1].set_xlabel('Relevance')
+    ax[1].set_ylabel('Uncertainty')
+    f.tight_layout()
+    f.savefig(f'plots/{name}.pdf')
+    
+    precision_denom = torch.arange(1, max_k+1)
+    MAP = torch.zeros((data.n_user, max_k))
+    Recall = torch.zeros((data.n_user, max_k))
+    avg_unc = torch.zeros(data.n_user)
+    URI = torch.full((data.n_user,), float('nan'))
+    
+    alphas = np.linspace(-3, 3, 11)
+    unc_MAP = torch.zeros((data.n_user, len(alphas)))
+    metrics['norm_unc'] = [[], []]
+
+    for idxu, user in enumerate(tqdm(range(data.n_user), desc=name+' - Recommending')):
+        
+        targets = torch.tensor(data.test[data.test[:, 0] == user, 1])
+        rated_train = torch.tensor(data.train[:, 1][data.train[:, 0] == user])
+        rated_val = torch.tensor(data.val[:, 1][data.val[:, 0] == user])
+        rated = torch.cat([rated_train, rated_val])
+        
+        rec, score, unc = model.rank(torch.tensor(user), ignored_item_ids=rated, top_n=999999)
+        
+        hits = torch.isin(rec[:max_k], targets, assume_unique=True)
+        n_hits = hits.cumsum(0)
+        avg_unc[idxu] = unc[:max_k].mean()
+        
+        if n_hits[-1] > 0:
+            precision = n_hits / precision_denom
+            MAP[idxu] = torch.cumsum(precision * hits, 0) / torch.clamp(n_hits, min=1)
+            Recall[idxu] = n_hits / len(targets)
+            URI[idxu] = (avg_unc[idxu] - unc[:max_k][hits].mean()) / unc[:max_k].std()
+            
+        norm_unc = (unc[:max_k] - unc[:max_k].mean()) / unc[:max_k].std()
+        metrics['norm_unc'][0] += norm_unc[hits].tolist()
+        metrics['norm_unc'][1] += norm_unc[~hits].tolist()
+
+        # Unc rank
+        for idxa, alpha in enumerate(alphas):
+            score_unc = score + alpha * unc
+            rec_unc = rec[torch.flip(np.argsort(score_unc), [0])[:10]]
+            hits = torch.isin(rec_unc, targets, assume_unique=True)
+            
+            if hits.sum() > 0:
+                precision = hits.cumsum(0) / precision_denom
+                unc_MAP[idxu, idxa] = torch.sum(precision * hits) / hits.sum()
+        
+    metrics['MAP'] = MAP.mean(0).numpy()
+    metrics['Recall'] = Recall.mean(0).numpy()
+    metrics['UAC'] = stats.spearmanr(MAP[:, -1], avg_unc)[0]
+    metrics['URI'] = torch.nanmean(URI, 0).item()
+    metrics['unc_MAP'] = unc_MAP.mean(0).numpy()
+    
+    # MAP per uncertainty bin
+    quantiles = np.quantile(avg_unc, np.linspace(0.1, 1, 11))
+    metrics['MAP-Uncertainty'] = np.zeros(len(quantiles) - 1)
+    for i in range(10):
+        indexer = np.logical_and(avg_unc >= quantiles[i], avg_unc <= quantiles[i+1])
+        metrics['MAP-Uncertainty'][i] = MAP[indexer, -1].mean()
+    
+    with open('results/' + name + '.pkl', 'wb') as f:
+        pickle.dump(metrics, file=f)
+    
     return metrics

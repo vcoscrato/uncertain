@@ -1,5 +1,75 @@
 import math
 import torch
+from .base import Implicit
+
+
+class GER(Implicit):
+
+    def __init__(self, n_user, n_item, embedding_dim, lr, weight_decay, n_negatives):
+        
+        super().__init__()
+        self.n_user = n_user
+        self.n_item = n_item
+        self.embedding_dim = embedding_dim
+        self.lr = lr
+        self.weight_decay = weight_decay
+        self.n_negatives = n_negatives
+
+        self.user_mean = torch.nn.Embedding(self.n_user, self.embedding_dim)
+        self.item_mean = torch.nn.Embedding(self.n_item, self.embedding_dim)
+        torch.nn.init.normal_(self.user_mean.weight, 0, 1)
+        torch.nn.init.normal_(self.item_mean.weight, 0, 1)
+        
+        self.user_var = torch.nn.Embedding(self.n_user, self.embedding_dim)
+        self.item_var = torch.nn.Embedding(self.n_item, self.embedding_dim)
+        torch.nn.init.constant_(self.user_var.weight, 1)
+        torch.nn.init.constant_(self.item_var.weight, 1)
+        
+        # self.item_bias = torch.nn.Embedding(self.n_item, 1)
+        # torch.nn.init.constant_(self.item_bias.weight, 0)
+        
+        self.save_hyperparameters()
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam([{"params": self.user_mean.parameters()}, {"params": self.user_var.parameters()},
+                                      {"params": self.item_mean.parameters()}, {"params": self.item_var.parameters()}], lr=self.lr)
+                                      # {"params": self.item_bias.parameters()}], lr=self.lr)
+        return optimizer
+
+    def get_user_embeddings(self, user_ids):
+        return self.user_mean(user_ids), self.user_var(user_ids)
+    
+    def get_item_embeddings(self, item_ids):
+        if item_ids is not None:
+            return self.item_mean(item_ids), self.item_var(item_ids)
+        else:
+            return self.item_mean.weight, self.item_var.weight
+        
+    def interact(self, user_embeddings, item_embeddings):
+        user_mean, user_var = user_embeddings
+        item_mean, item_var = item_embeddings
+        
+        mean = (user_mean * item_mean).sum(1).flatten() # + item_bias.flatten()
+        # var = torch.sum(item_var * (2 * user_mean ** 2 + user_var), 1) + torch.sum(user_var * item_mean, 1)
+        var =  2 * (user_mean * item_var * user_mean).sum(1).flatten() + \
+               (item_mean * user_var * item_mean).sum(1).flatten() + \
+               (user_var * item_var).sum(1).flatten()
+        return 1 - (0.5 * (1 + torch.erf((0 - mean) * var.sqrt().reciprocal() / math.sqrt(2)))), var
+        
+    def get_penalty(self, user_embeddings, item_embeddings, neg_item_embeddings):
+        user_prior = (- 3/2 * self.user_var.weight.reciprocal().log()).sum() - \
+                     ((4 + self.user_mean.weight**2) / (self.user_var.weight.reciprocal() * 2)).sum()
+        item_prior = (- 3/2 * self.item_var.weight.reciprocal().log()).sum() - \
+                     ((4 + self.item_mean.weight**2) / (self.item_var.weight.reciprocal() * 2)).sum()
+        return - self.weight_decay * (user_prior + item_prior)
+
+    
+    
+    
+# Code currently on pairwise verion, need to unify
+
+import math
+import torch
 import numpy as np
 from pytorch_lightning import LightningModule
 from torch.distributions import Normal, Gamma

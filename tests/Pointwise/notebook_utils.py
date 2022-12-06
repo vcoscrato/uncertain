@@ -166,13 +166,6 @@ def test_vanilla(model, data, max_k, name):
     with open('results/' + name + '.pkl', 'wb') as f:
         pickle.dump(metrics, file=f)
     
-    # MAP per user profile size bin
-    quantiles = np.quantile(data.user_support, np.linspace(0.1, 1, 10))
-    metrics['MAP-ProfSize'] = np.zeros(len(quantiles) - 1)
-    for i in range(9):
-        indexer = np.logical_and(data.user_support >= quantiles[i], data.user_support <= quantiles[i+1])
-        metrics['MAP-ProfSize'][i] = MAP[indexer, -1].mean()
-    
     return metrics
 
 
@@ -232,7 +225,6 @@ def test_uncertain(model, data, max_k, name):
         metrics['norm_unc'][1] += norm_unc[~hits].tolist()
 
         # Unc rank
-        '''
         for idxa, alpha in enumerate(alphas):
             score_unc = score + alpha * unc
             rec_unc = rec[torch.flip(np.argsort(score_unc), [0])[:10]]
@@ -241,13 +233,12 @@ def test_uncertain(model, data, max_k, name):
             if hits.sum() > 0:
                 precision = hits.cumsum(0) / precision_denom
                 unc_MAP[idxu, idxa] = torch.sum(precision * hits) / hits.sum()
-        '''
         
     metrics['MAP'] = MAP.mean(0).numpy()
     metrics['Recall'] = Recall.mean(0).numpy()
     metrics['UAC'] = stats.spearmanr(MAP[:, -1], avg_unc)[0]
     metrics['URI'] = torch.nanmean(URI, 0).item()
-    # metrics['unc_MAP'] = unc_MAP.mean(0).numpy()
+    metrics['unc_MAP'] = unc_MAP.mean(0).numpy()
     
     # MAP per uncertainty bin
     quantiles = np.quantile(avg_unc, np.linspace(0.1, 1, 11))
@@ -255,15 +246,6 @@ def test_uncertain(model, data, max_k, name):
     for i in range(10):
         indexer = np.logical_and(avg_unc >= quantiles[i], avg_unc <= quantiles[i+1])
         metrics['MAP-Uncertainty'][i] = MAP[indexer, -1].mean()
-    
-    # MAP per user profile size bin
-    '''
-    quantiles = np.quantile(data.user_support, np.linspace(0.1, 1, 10))
-    metrics['MAP-ProfSize'] = np.zeros(len(quantiles) - 1)
-    for i in range(9):
-        indexer = np.logical_and(data.user_support >= quantiles[i], data.user_support <= quantiles[i+1])
-        metrics['MAP-ProfSize'][i] = MAP[indexer, -1].mean()
-    '''
     
     with open('results/' + name + '.pkl', 'wb') as f:
         pickle.dump(metrics, file=f)

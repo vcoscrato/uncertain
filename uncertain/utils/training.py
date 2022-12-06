@@ -15,9 +15,15 @@ class LitProgressBar(TQDMProgressBar):
 
 def train(model, data, path, name):
     prog_bar = LitProgressBar()
-    es = EarlyStopping(monitor='val_likelihood', min_delta=0.0001, patience=3, verbose=False, mode='max')
-    cp = ModelCheckpoint(monitor='val_likelihood', dirpath=path, filename=name+'-{epoch}-{val_likelihood}', mode='max', save_weights_only=True)
-    trainer = Trainer(gpus=1, min_epochs=5, max_epochs=200, logger=False, callbacks=[prog_bar, es, cp], check_val_every_n_epoch=5)
+    if data.impicit:
+        criteria = 'val_MAP'
+        check_interval = 3
+    else:
+        criteria = 'val_likelihood'
+        check_interval = 5
+    es = EarlyStopping(monitor=criteria, min_delta=0.0001, patience=3, verbose=False, mode='max')
+    cp = ModelCheckpoint(monitor=criteria, dirpath=path, filename=name+'-{epoch}-{'+criteria+'}', mode='max', save_weights_only=True)
+    trainer = Trainer(gpus=1, min_epochs=5, max_epochs=200, logger=False, callbacks=[prog_bar, es, cp], check_val_every_n_epoch=check_interval)
     trainer.fit(model, datamodule=data)
     return es.best_score.item(), cp.best_model_path
 
@@ -36,6 +42,8 @@ def run_study(name, objective=None, n_trials=0):
     return study
 
 
-def load(name, model):
-    df = run_study(name, n_trials=0).trials_dataframe()
-    return model.load_from_checkpoint(df.user_attrs_filename[df.value.argmax()])
+def load(model, study, top=0):
+    sorted_runs = study.trials_dataframe().sort_values('value')[::-1]
+    model = model.load_from_checkpoint(sorted_runs.user_attrs_filename.iloc[top])
+    model.eval()
+    return model, sorted_runs
