@@ -82,6 +82,9 @@ class FactorizationModel(LightningModule):
 class VanillaRecommender:
     
     def predict(self, user_ids, item_ids=None):
+        '''
+        Interface from forward to output numpy arrays.
+        '''
         with torch.no_grad():
             user_ids = torch.tensor(user_ids)
             if item_ids is not None:
@@ -89,6 +92,9 @@ class VanillaRecommender:
             return self(user_ids, item_ids).numpy()
     
     def rank(self, user_id, item_ids=None, ignored_item_ids=None, top_n=None):
+        '''
+        Ranking is performing directly on pytorch tensors.
+        '''
         assert item_ids is None or ignored_item_ids is None, 'Passing both item_ids and ignored_item_ids is not supported.'
 
         with torch.no_grad():
@@ -107,6 +113,9 @@ class VanillaRecommender:
         return items[:cut], scores[:cut]
 
     def recommend(self, user, remove_items=None, n=10):
+        '''
+        Outputs beautiful DataFrame
+        '''
         with torch.no_grad():
             out = DataFrame(self(torch.tensor(user)), columns=['scores'])
             if remove_items is not None:
@@ -118,14 +127,32 @@ class VanillaRecommender:
 class UncertainRecommender:
     
     def predict(self, user_ids, item_ids=None):
+        '''
+        Interface from forward to output numpy arrays.
+        '''
         with torch.no_grad():
             user_ids = torch.tensor(user_ids)
             if item_ids is not None:
                 item_ids = torch.tensor(item_ids)
             preds, uncertainties = self(user_ids, item_ids)
             return preds.numpy(), uncertainties.numpy()
+        
+    def uncertain_predict(self, user_ids, item_ids=None, **kwargs):
+        '''
+        Interface from uncertain_forward to output numpy arrays.
+        '''
+        with torch.no_grad():
+            user_ids = torch.tensor(user_ids)
+            if item_ids is not None:
+                item_ids = torch.tensor(item_ids)
+            obj = self.uncertain_transform(user_ids, item_ids)
+            preds = self.uncertain_transform(obj, **kwargs)
+            return preds.numpy()
     
     def rank(self, user_id, item_ids=None, ignored_item_ids=None, top_n=None):
+        '''
+        Ranking is performing directly on pytorch tensors.
+        '''
         assert item_ids is None or ignored_item_ids is None, 'Passing both item_ids and ignored_item_ids is not supported.'
 
         with torch.no_grad():
@@ -144,8 +171,33 @@ class UncertainRecommender:
         uncertainties = uncertainties[items]
 
         return items[:cut], scores[:cut], uncertainties[:cut]
+    
+    def uncertain_rank(self, user_id, item_ids=None, ignored_item_ids=None, top_n=None, **kwargs):
+        '''
+        Ranking is performing directly on pytorch tensors.
+        '''
+        assert item_ids is None or ignored_item_ids is None, 'Passing both item_ids and ignored_item_ids is not supported.'
+
+        with torch.no_grad():
+            obj = self(user_id, item_ids)
+            preds = self.uncertain_transform(obj, **kwargs)
+            
+        if top_n is None:
+            top_n = self.n_item
+
+        if ignored_item_ids is not None:
+            preds[ignored_item_ids] = -float('inf')
+            cut = min(len(preds) - len(ignored_item_ids), top_n)
+        else:
+            cut = top_n
+
+        scores, items = torch.sort(preds, descending=True)
+        return items[:cut], scores[:cut]
 
     def recommend(self, user, remove_items=None, n=10):
+        '''
+        Outputs beautiful DataFrame
+        '''
         with torch.no_grad():
             out = DataFrame(column_stack(self(torch.tensor(user))))
             out.columns = ['scores', 'uncertainties']
@@ -154,9 +206,14 @@ class UncertainRecommender:
             out = out.sort_values(by='scores', ascending=False)[:n]
             return out
 
-    def uncertain_recommend(self, user, threshold=None, remove_items=None, n=10):
+    def uncertain_recommend(self, user, remove_items=None, n=10, **kwargs):
+        '''
+        Outputs beautiful DataFrame
+        '''        
         with torch.no_grad():
-            out = DataFrame(self.uncertain_predict(torch.tensor(user), threshold), columns=['scores'])
+            obj = self(torch.tensor(user))
+            preds = self.uncertain_transform(obj, **kwargs)
+            out = DataFrame(preds, columns=['scores'])
             if remove_items is not None:
                 out.loc[remove_items, 'scores'] = -float('inf')
             out = out.sort_values(by='scores', ascending=False)[:n]

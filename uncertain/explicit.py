@@ -2,15 +2,7 @@ import torch
 import numpy as np
 from scipy.stats import norm
 from .core import BiasModel, FactorizationModel, VanillaRecommender, UncertainRecommender
-
-
-def mse(predicted, observed):
-    return ((observed - predicted) ** 2).sum()
-
-
-def gaussian(predicted, observed):
-    mean, variance = predicted
-    return (((observed - mean) ** 2) / variance).sum() + torch.log(variance).sum()
+from .loss import mse, gaussian
 
 
 class Explicit:

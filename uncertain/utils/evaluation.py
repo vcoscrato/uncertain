@@ -225,6 +225,7 @@ def test_vanilla(model, data, max_k, name):
     precision_denom = torch.arange(1, max_k+1)
     MAP = torch.zeros((data.n_user, max_k))
     Recall = torch.zeros((data.n_user, max_k))
+    Average_Surprise = np.zeros((data.n_user, max_k))
 
     for idxu, user in enumerate(tqdm(range(data.n_user), desc=name+' - Recommending')):
         
@@ -233,7 +234,7 @@ def test_vanilla(model, data, max_k, name):
         rated_val = torch.tensor(data.val[:, 1][data.val[:, 0] == user])
         rated = torch.cat([rated_train, rated_val])
         
-        rec, _ = model.rank(torch.tensor(user), ignored_item_ids=rated, top_n=10)
+        rec, _ = model.rank(torch.tensor(user), ignored_item_ids=rated, top_n=max_k)
         hits = torch.isin(rec, targets, assume_unique=True)
         n_hits = hits.cumsum(0)
         
@@ -241,9 +242,13 @@ def test_vanilla(model, data, max_k, name):
             precision = n_hits / precision_denom
             MAP[idxu] = torch.cumsum(precision * hits, 0) / torch.clamp(n_hits, min=1)
             Recall[idxu] = n_hits / len(targets)
+            # Surprise
+            profile_distances = data.distances[rec[:max_k]][:, rated]  # To use expected surprise, add: * hits[:, np.newaxis]
+            Average_Surprise[idxu] = profile_distances.min(1).cumsum(0) / np.arange(1, max_k+1)
 
     metrics['MAP'] = MAP.mean(0).numpy()
     metrics['Recall'] = Recall.mean(0).numpy()
+    metrics['Average_Surprise'] = Average_Surprise.mean(0)
     
     with open('results/' + name + '.pkl', 'wb') as f:
         pickle.dump(metrics, file=f)
@@ -280,8 +285,14 @@ def test_uncertain(model, data, max_k, name):
     Recall = torch.zeros((data.n_user, max_k))
     avg_unc = torch.zeros(data.n_user)
     URI = torch.full((data.n_user,), float('nan'))
+    Average_Surprise = np.zeros((data.n_user, max_k))
     
-    alphas = np.linspace(-3, 3, 11)
+    if hasattr(model, 'uncertain_transform'):
+        MAP2 = torch.zeros((data.n_user, max_k))
+        Recall2 = torch.zeros((data.n_user, max_k))
+        Average_Surprise2 = np.zeros((data.n_user, max_k))
+    
+    alphas = np.linspace(-1, 1, 11)
     unc_MAP = torch.zeros((data.n_user, len(alphas)))
     metrics['norm_unc'] = [[], []]
 
@@ -303,6 +314,23 @@ def test_uncertain(model, data, max_k, name):
             MAP[idxu] = torch.cumsum(precision * hits, 0) / torch.clamp(n_hits, min=1)
             Recall[idxu] = n_hits / len(targets)
             URI[idxu] = (avg_unc[idxu] - unc[:max_k][hits].mean()) / unc[:max_k].std()
+            # Surprise
+            profile_distances = data.distances[rec[:max_k]][:, rated]  # To use expected surprise, add: * hits[:, np.newaxis]
+            Average_Surprise[idxu] = profile_distances.min(1).cumsum(0) / np.arange(1, max_k+1)
+            
+        if hasattr(model, 'uncertain_transform'):
+            score_unc = model.uncertain_transform((score, unc))
+            rec_unc = rec[torch.argsort(score_unc, descending=True)]
+            hits = torch.isin(rec_unc[:max_k], targets, assume_unique=True)
+            n_hits = hits.cumsum(0)
+            
+            if n_hits[-1] > 0:
+                precision = n_hits / precision_denom
+                MAP2[idxu] = torch.cumsum(precision * hits, 0) / torch.clamp(n_hits, min=1)
+                Recall2[idxu] = n_hits / len(targets)
+                # Surprise
+                profile_distances = data.distances[rec[:max_k]][:, rated]  # To use expected surprise, add: * hits[:, np.newaxis]
+                Average_Surprise2[idxu] = profile_distances.min(1).cumsum(0) / np.arange(1, max_k+1)
             
         norm_unc = (unc[:max_k] - unc[:max_k].mean()) / unc[:max_k].std()
         metrics['norm_unc'][0] += norm_unc[hits].tolist()
@@ -311,7 +339,7 @@ def test_uncertain(model, data, max_k, name):
         # Unc rank
         for idxa, alpha in enumerate(alphas):
             score_unc = score + alpha * unc
-            rec_unc = rec[torch.flip(np.argsort(score_unc), [0])[:10]]
+            rec_unc = rec[torch.flip(np.argsort(score_unc), [0])[:max_k]]
             hits = torch.isin(rec_unc, targets, assume_unique=True)
             
             if hits.sum() > 0:
@@ -323,13 +351,41 @@ def test_uncertain(model, data, max_k, name):
     metrics['UAC'] = stats.spearmanr(MAP[:, -1], avg_unc)[0]
     metrics['URI'] = torch.nanmean(URI, 0).item()
     metrics['unc_MAP'] = unc_MAP.mean(0).numpy()
+    metrics['Average_Surprise'] = Average_Surprise.mean(0)
     
-    # MAP per uncertainty bin
+    if hasattr(model, 'uncertain_transform'):
+        metrics['MAP2'] = MAP2.mean(0).numpy()
+        metrics['Recall2'] = Recall2.mean(0).numpy()
+        metrics['Average_Surprise2'] = Average_Surprise2.mean(0)
+    
+    # MAP and surprise per uncertainty bin
     quantiles = np.quantile(avg_unc, np.linspace(0.1, 1, 11))
     metrics['MAP-Uncertainty'] = np.zeros(len(quantiles) - 1)
+    metrics['Surprise-Uncertainty'] = np.zeros(len(quantiles) - 1)
     for i in range(10):
         indexer = np.logical_and(avg_unc >= quantiles[i], avg_unc <= quantiles[i+1])
         metrics['MAP-Uncertainty'][i] = MAP[indexer, -1].mean()
+        metrics['Surprise-Uncertainty'][i] = Average_Surprise[indexer, -1].mean()
+    
+    # MAP and Surprise per user profile size bin
+    quantiles = np.quantile(data.user_support, np.linspace(0.1, 1, 11))
+    metrics['MAP-ProfSize'] = np.zeros(len(quantiles) - 1)
+    metrics['Surprise-ProfSize'] = np.zeros(len(quantiles) - 1)
+    for i in range(10):
+        indexer = np.logical_and(data.user_support >= quantiles[i], data.user_support <= quantiles[i+1])
+        metrics['MAP-ProfSize'][i] = MAP[indexer, -1].mean()
+        metrics['Surprise-ProfSize'][i] = Average_Surprise[indexer].mean()
+    
+    '''
+    # MAP per user uncertainty (for CPMF)
+    if hasattr(model, 'get_user_uncertainty'):
+        uncertainty = model.get_user_uncertainty()
+        quantiles = np.quantile(uncertainty, np.linspace(0.1, 1, 11))
+        metrics['MAP-UserUncertainty'] = np.zeros(len(quantiles) - 1)
+        for i in range(10):
+            indexer = np.logical_and(uncertainty >= quantiles[i], uncertainty <= quantiles[i+1])
+            metrics['MAP-UserUncertainty'][i] = MAP[indexer, -1].mean()
+    '''
     
     with open('results/' + name + '.pkl', 'wb') as f:
         pickle.dump(metrics, file=f)

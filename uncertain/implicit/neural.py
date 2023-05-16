@@ -1,11 +1,14 @@
+import math
 import torch
-from .base import Implicit
-from ..core import UncertainRecommender
+from .base import Implicit, BCE, BPR, Pointwise, Pairwise, AUR
+from ..core import VanillaRecommender, UncertainRecommender
 
 
-class MLP(Implicit):
 
-    def __init__(self, n_user, n_item, embedding_dim, lr, n_negatives=4, dropout=0, n_hidden=3):
+class GaussianMLP(Implicit, UncertainRecommender):
+
+    def __init__(self, n_user, n_item, embedding_dim=128, lr=1e-4, dropout=0, n_hidden=3, n_negatives=None, loss='Pointwise',
+                gamma=0, beta=1/2, ratio=None, k=None):
         
         super().__init__()
         self.n_user = n_user
@@ -13,10 +16,15 @@ class MLP(Implicit):
         self.embedding_dim = embedding_dim
         self.lr = lr
         self.n_negatives = n_negatives
+        self.gamma = gamma
+        self.beta = beta
+        self.ratio = ratio
+        self.k = k
         
         self.n_hidden = n_hidden
         self.dropl = torch.nn.Dropout(p=dropout)
         self.ReLU = torch.nn.ReLU()
+        self.var_activation = torch.nn.Softplus()
         
         # Init embeddings
         self.user_embeddings = torch.nn.Embedding(self.n_user, self.embedding_dim)
@@ -32,11 +40,21 @@ class MLP(Implicit):
             torch.nn.init.normal_(self.layers[-1].weight, mean=0, std=0.01)
             torch.nn.init.normal_(self.layers[-1].bias, mean=0, std=0.01)
             size = int(size/2)
-        self.out_layer = torch.nn.Linear(size, 1, bias=True)
+        self.out_layer = torch.nn.Linear(size, 2, bias=True)
         torch.nn.init.normal_(self.out_layer.weight, mean=0, std=0.01)
         torch.nn.init.normal_(self.out_layer.bias, mean=0, std=0.01)
         
+        if loss == 'Pointwise':
+            self.loss = Pointwise_loss(gamma=self.gamma)
+        elif loss == 'Pairwise':
+            self.loss = Pairwise_loss(gamma=self.gamma)
+        elif loss == 'AUR':
+            self.loss = AUR_loss(beta=self.beta, gamma=self.gamma)
         self.save_hyperparameters()
+        
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
+        return optimizer
     
     def get_user_embeddings(self, user_ids):
         return self.user_embeddings(user_ids)
@@ -55,10 +73,14 @@ class MLP(Implicit):
         for layer in self.layers:
             x = self.ReLU(layer(x))
             x = self.dropl(x)
-        return self.out_layer(x).sigmoid().flatten()
+        x = self.out_layer(x)
+        return x[:, 0].flatten(), self.var_activation(x[:, 1].flatten())
+
+    def uncertain_transform(self, obj):
+        mean, var = obj
+        return 1 - 0.5 * (1 + torch.erf((0 - mean) * var.sqrt().reciprocal() / math.sqrt(2)))
 
 
-    
 class MCDropout(UncertainRecommender):
 
     def __init__(self, base_model, mc_iteration):
