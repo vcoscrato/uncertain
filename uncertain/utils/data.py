@@ -28,19 +28,20 @@ class Data(LightningDataModule):
         if self.implicit:
             if hasattr(data, 'score'):
                 data = data.drop('score', 1)
+
+        if min_user_len > 0:
+            length = data.user.value_counts()
+            data.drop(data.index[data.user.isin(length.index[length < min_user_len])], 0, inplace=True)
         
-        ''' 
         # Drop items with too few ratings
         if min_item_len > 0:
             length = data.item.value_counts()
             data.drop(data.index[data.item.isin(length.index[length < min_item_len])], 0, inplace=True)
 
         # Drop user with too few ratings
-        if min_user_len > 0:
-            length = data.user.value_counts()
-            data.drop(data.index[data.user.isin(length.index[length < min_user_len])], 0, inplace=True)        
-        '''
 
+                     
+        '''
         while True:
             n_interaction = len(data)
             print(f'init cycle: {n_interaction} interactions.')
@@ -59,6 +60,7 @@ class Data(LightningDataModule):
             print(f'end cycle: {n_interaction_after} interactions.\n')
             if n_interaction_after == n_interaction:
                 break
+        '''
 
         # Make sure user and item ids are consecutive integers
         data.user = data.user.factorize()[0]
@@ -157,15 +159,15 @@ class Data(LightningDataModule):
 
     def train_dataloader(self):
         if not self.user_based:
-            return DataLoader(self.train, self.batch_size, drop_last=True, shuffle=True, num_workers=0)
+            return DataLoader(self.train, self.batch_size, drop_last=True, shuffle=True, num_workers=10)
         else:
-            return DataLoader(self.train_user_based, self.batch_size, drop_last=True, shuffle=True, num_workers=0, collate_fn=lambda x:x)
+            return DataLoader(self.train_user_based, self.batch_size, drop_last=True, shuffle=True, num_workers=10, collate_fn=lambda x:x)
 
     def val_dataloader(self):
         if self.implicit:
-            return DataLoader(self.train_val, batch_size=1, drop_last=False, shuffle=False, num_workers=0)
+            return DataLoader(self.train_val, batch_size=1, drop_last=False, shuffle=False, num_workers=10)
         else:
-            return DataLoader(self.val, self.batch_size, drop_last=False, shuffle=False, num_workers=0)
+            return DataLoader(self.val, self.batch_size, drop_last=False, shuffle=False, num_workers=10)
 
         
 def collate(a):

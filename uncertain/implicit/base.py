@@ -1,7 +1,7 @@
 import math
 import torch
 from pytorch_lightning import LightningModule
-from ..core import VanillaRecommender
+from ..core import VanillaRecommender, UncertainRecommender
 
 
 # Losses
@@ -38,6 +38,12 @@ def normal_cdf(mean, var, value=0):
     '''
     return 0.5 * (1 + torch.erf((value - mean) * var.sqrt().reciprocal() / math.sqrt(2)))
 
+
+def normal_zero_one_cdf(value):
+    '''
+    Returns the P(N(mean, var) <= value)
+    '''
+    return 0.5 * (1 + torch.erf((value) / math.sqrt(2)))
 
 def MSE(positive_scores, negative_scores):
     '''
@@ -106,7 +112,12 @@ class Implicit(LightningModule):
         
         train_likelihood, loss = self.loss(pos_scores, neg_scores)
         self.log('train_likelihood', train_likelihood, prog_bar=True)
-        
+        if isinstance(self, UncertainRecommender):
+            self.log('avg_pos_score', pos_scores[0].mean(), prog_bar=True)
+            self.log('avg_neg_score', neg_scores[0].mean(), prog_bar=True)
+            self.log('avg_pos_unc', pos_scores[1].exp().mean(), prog_bar=True)
+            self.log('avg_neg_unc', neg_scores[1].exp().mean(), prog_bar=True)
+                      
         # Loss
         self.log('loss', loss)
         return loss
@@ -114,9 +125,9 @@ class Implicit(LightningModule):
     def validation_step(self, batch, batch_idx):
         user, rated, targets = batch
         if hasattr(self, 'uncertain_transform'):
-            rec = self.uncertain_rank(user, ignored_item_ids=rated[0], top_n=5)[0]
+            rec, _, unc = self.uncertain_rank(user, ignored_item_ids=rated[0], top_n=5)
         else:
-            rec = self.rank(user, ignored_item_ids=rated[0], top_n=5)[0]
+            rec = self.rank(user, ignored_item_ids=rated[0], top_n=5)
         hits = torch.isin(rec, targets[0], assume_unique=True)
         n_hits = hits.cumsum(0)
         if n_hits[-1] > 0:

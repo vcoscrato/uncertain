@@ -2,10 +2,11 @@ import torch
 from .base import Implicit
 from blitz.modules import BayesianLinear
 from blitz.utils import variational_estimator
+from ..core import VanillaRecommender, UncertainRecommender
 
 
 @variational_estimator
-class BayesianMLP(Implicit):
+class BayesianMLP(Implicit, UncertainRecommender):
 
     def __init__(self, n_user, n_item, embedding_dim, lr, num_batches, n_negatives=4, n_hidden=3, 
                  sample_train=5, sample_eval=5, prior_pi=0.5, prior_sigma_1=1, prior_sigma_2=0.01):
@@ -46,6 +47,10 @@ class BayesianMLP(Implicit):
     def init_layer(self, in_size, out_size):
         return BayesianLinear(in_size, out_size, posterior_rho_init=-4.5, prior_pi=self.prior_pi, 
                               prior_sigma_1 = self.prior_sigma_1, prior_sigma_2 = self.prior_sigma_2)
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
+        return optimizer
         
     def get_user_embeddings(self, user_ids):
         return self.user_embeddings(user_ids)
@@ -83,6 +88,12 @@ class BayesianMLP(Implicit):
             loss -= self.interact(user_embeddings, item_embeddings).log().sum() / n
             loss -= (1 - self.interact(user_embeddings.repeat(self.n_negatives, 1), neg_item_embeddings)).log().sum() / n
             loss += prior_scaling * self.nn_kl_divergence()
+
+        train_likelihood = loss
+        self.log('train_likelihood', train_likelihood, prog_bar=True)
+
+        # Loss
+        self.log('loss', loss)
         return loss / self.sample_train
     
     def forward(self, user_ids, item_ids=None):
@@ -94,7 +105,7 @@ class BayesianMLP(Implicit):
 
 
 @variational_estimator
-class FullBayesianGER(UncertainImplicit):
+class FullBayesianGER(Implicit):
 
     def __init__(self, n_user, n_item, embedding_dim, lr, num_batches, n_negatives=4, n_hidden=3, 
                  sample_train=5, sample_eval=5, prior_pi=0.5, prior_sigma_1=1, prior_sigma_2=0.01):

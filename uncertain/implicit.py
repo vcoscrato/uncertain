@@ -27,6 +27,8 @@ class Implicit:
         return loss
 
     def validation_step(self, batch, batch_idx):
+        if hasattr(dropl):
+            self.dropl.eval()
         user, rated, targets = batch
         rec = self._val_pred(user)
         rec[rated] = -float('inf')
@@ -38,6 +40,8 @@ class Implicit:
             self.log('val_MAP', torch.sum(precision * hits) / n_hits[-1], prog_bar=True)
         else:
             self.log('val_MAP', torch.tensor(0, dtype=torch.float32), prog_bar=True)
+        if hasattr(dropl):
+            self.dropl.train()
             
     def _val_pred(self, user):
         user_embedding = self.user_embeddings(user)

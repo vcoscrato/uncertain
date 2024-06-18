@@ -192,7 +192,8 @@ class UncertainRecommender:
             cut = top_n
 
         scores, items = torch.sort(preds, descending=True)
-        return items[:cut], scores[:cut]
+        uncertainties = obj[1][items]
+        return items[:cut], scores[:cut], uncertainties[:cut]
 
     def recommend(self, user, remove_items=None, n=10):
         '''

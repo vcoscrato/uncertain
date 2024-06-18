@@ -1,6 +1,7 @@
 import math
 import torch
-from .base import Implicit, BCE, BPR, Pointwise, Pairwise, AUR
+from .base import Implicit
+from .DoubleMF import AUR_loss, Pairwise_loss, Pointwise_loss
 from ..core import VanillaRecommender, UncertainRecommender
 
 
@@ -8,7 +9,7 @@ from ..core import VanillaRecommender, UncertainRecommender
 class GaussianMLP(Implicit, UncertainRecommender):
 
     def __init__(self, n_user, n_item, embedding_dim=128, lr=1e-4, dropout=0, n_hidden=3, n_negatives=None, loss='Pointwise',
-                gamma=0, beta=1/2, ratio=None, k=None):
+                 gamma=0, beta=1/2, ratio=1/2):
         
         super().__init__()
         self.n_user = n_user
@@ -19,12 +20,10 @@ class GaussianMLP(Implicit, UncertainRecommender):
         self.gamma = gamma
         self.beta = beta
         self.ratio = ratio
-        self.k = k
         
         self.n_hidden = n_hidden
         self.dropl = torch.nn.Dropout(p=dropout)
         self.ReLU = torch.nn.ReLU()
-        self.var_activation = torch.nn.Softplus()
         
         # Init embeddings
         self.user_embeddings = torch.nn.Embedding(self.n_user, self.embedding_dim)
@@ -36,13 +35,14 @@ class GaussianMLP(Implicit, UncertainRecommender):
         self.layers = torch.nn.ModuleList()
         size = self.embedding_dim*2
         while len(self.layers) < self.n_hidden:
-            self.layers.append(torch.nn.Linear(size, int(size/2), bias=True))
+            # self.layers.append(torch.nn.Linear(size, int(size/2), bias=True))
+            self.layers.append(torch.nn.Linear(size, int(size), bias=True))
             torch.nn.init.normal_(self.layers[-1].weight, mean=0, std=0.01)
             torch.nn.init.normal_(self.layers[-1].bias, mean=0, std=0.01)
-            size = int(size/2)
+            # size = int(size/2)
         self.out_layer = torch.nn.Linear(size, 2, bias=True)
         torch.nn.init.normal_(self.out_layer.weight, mean=0, std=0.01)
-        torch.nn.init.normal_(self.out_layer.bias, mean=0, std=0.01)
+        torch.nn.init.normal_(self.out_layer.bias, mean=1, std=0.01)
         
         if loss == 'Pointwise':
             self.loss = Pointwise_loss(gamma=self.gamma)
@@ -74,11 +74,21 @@ class GaussianMLP(Implicit, UncertainRecommender):
             x = self.ReLU(layer(x))
             x = self.dropl(x)
         x = self.out_layer(x)
-        return x[:, 0].flatten(), self.var_activation(x[:, 1].flatten())
+        return x[:, 0].flatten(), x[:, 1].flatten()
 
     def uncertain_transform(self, obj):
         mean, var = obj
-        return 1 - 0.5 * (1 + torch.erf((0 - mean) * var.sqrt().reciprocal() / math.sqrt(2)))
+        if self.ratio is not None:
+            return self.ratio * mean + (1-self.ratio) * var.exp().sqrt()
+        else:
+            return 1 - 0.5 * (1 + torch.erf((0 - mean) * var.sqrt().reciprocal() / math.sqrt(2)))
+
+    def uncertain_transform(self, obj):
+        mean, var = obj
+        if self.ratio is not None:
+            return self.ratio * mean + (1-self.ratio) * var.exp().sqrt()
+        else:
+            return 1 - 0.5 * (1 + torch.erf((0 - mean) * var.sqrt().reciprocal() / math.sqrt(2)))
 
 
 class MCDropout(UncertainRecommender):
@@ -107,30 +117,6 @@ class Ensemble(UncertainRecommender):
         pred = torch.vstack([model(user_ids, item_ids) for model in self.models])
         return pred.mean(0), pred.var(0)
 
-    
-
-class ItemSupport(UncertainRecommender):
-
-    def __init__(self, base_MF, uncertainty):
-        self.MF = base_MF
-        self.uncertainty = torch.tensor(uncertainty)
-
-    def __call__(self, user_ids, item_ids=None):
-        pred = self.MF(user_ids, item_ids)
-        unc = self.uncertainty[item_ids] if item_ids is not None else self.uncertainty
-        return pred, unc
-
-    
-class UserSupport(UncertainRecommender):
-
-    def __init__(self, base_MF, uncertainty):
-        self.MF = base_MF
-        self.uncertainty = torch.tensor(uncertainty)
-
-    def __call__(self, user_ids, item_ids=None):
-        pred = self.MF(user_ids, item_ids)
-        unc = self.uncertainty[user_ids] if item_ids is not None else self.uncertainty[user_ids.expand(self.MF.n_item)]
-        return pred, unc
 
     
     

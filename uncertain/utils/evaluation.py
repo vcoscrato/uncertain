@@ -226,6 +226,8 @@ def test_vanilla(model, data, max_k, name):
     MAP = torch.zeros((data.n_user, max_k))
     Recall = torch.zeros((data.n_user, max_k))
     Average_Surprise = np.zeros((data.n_user, max_k))
+    MAP_Relative = np.zeros((data.n_user, max_k))
+    Recall_Relative = np.zeros((data.n_user, max_k))
 
     for idxu, user in enumerate(tqdm(range(data.n_user), desc=name+' - Recommending')):
         
@@ -234,7 +236,7 @@ def test_vanilla(model, data, max_k, name):
         rated_val = torch.tensor(data.val[:, 1][data.val[:, 0] == user])
         rated = torch.cat([rated_train, rated_val])
         
-        rec, _ = model.rank(torch.tensor(user), ignored_item_ids=rated, top_n=max_k)
+        rec, score = model.rank(torch.tensor(user), ignored_item_ids=rated, top_n=max_k)
         hits = torch.isin(rec, targets, assume_unique=True)
         n_hits = hits.cumsum(0)
         
@@ -243,12 +245,36 @@ def test_vanilla(model, data, max_k, name):
             MAP[idxu] = torch.cumsum(precision * hits, 0) / torch.clamp(n_hits, min=1)
             Recall[idxu] = n_hits / len(targets)
             # Surprise
-            profile_distances = data.distances[rec[:max_k]][:, rated]  # To use expected surprise, add: * hits[:, np.newaxis]
-            Average_Surprise[idxu] = profile_distances.min(1).cumsum(0) / np.arange(1, max_k+1)
+            if hasattr(data, 'distances'):
+                profile_distances = data.distances[rec[:max_k]][:, rated]  # To use expected surprise, add: * hits[:, np.newaxis]
+                Average_Surprise[idxu] = profile_distances.min(1).cumsum(0) / np.arange(1, max_k+1)
+
+        # Evaluate tail relative
+        n_target_tail = torch.isin(targets, data.tail_items).sum()
+
+        if n_target_tail > 0:
+            # Dont recommend head items
+            score[torch.isin(rec, data.head_items, assume_unique=True)] = -99999999
+            rec = rec[torch.argsort(score, descending=True)]
+            hits = torch.isin(rec[:max_k], targets, assume_unique=True)
+            n_hits = hits.cumsum(0)
+
+            if n_hits[-1] > 0:
+                Recall_Relative[idxu] = n_hits / n_target_tail
+                precision = n_hits / precision_denom
+                MAP_Relative[idxu] = torch.cumsum(precision * hits, 0) / torch.clamp(n_hits, min=1)
+
+        else:
+            Recall_Relative[idxu] = np.nan
+            MAP_Relative[idxu] = np.nan
+            
 
     metrics['MAP'] = MAP.mean(0).numpy()
     metrics['Recall'] = Recall.mean(0).numpy()
     metrics['Average_Surprise'] = Average_Surprise.mean(0)
+    print(np.isnan(MAP_Relative).sum())
+    metrics['Map relative'] = np.nanmean(MAP_Relative, 0)
+    metrics['Recall relative'] = np.nanmean(Recall_Relative, 0)
     
     with open('results/' + name + '.pkl', 'wb') as f:
         pickle.dump(metrics, file=f)
@@ -269,7 +295,7 @@ def test_uncertain(model, data, max_k, name):
     rand_preds = model.predict(data.rand['users'], data.rand['items'])
     metrics['corr_usup'] = stats.spearmanr(rand_preds[1], data.user_support[data.rand['users']].flatten())[0]
     metrics['corr_isup'] = stats.spearmanr(rand_preds[1], data.item_support[data.rand['items']].flatten())[0]
-    
+
     f, ax = plt.subplots(ncols=2)
     ax[0].hist(rand_preds[1], density=True)
     ax[0].set_xlabel('Uncertainty')
@@ -291,10 +317,16 @@ def test_uncertain(model, data, max_k, name):
         MAP2 = torch.zeros((data.n_user, max_k))
         Recall2 = torch.zeros((data.n_user, max_k))
         Average_Surprise2 = np.zeros((data.n_user, max_k))
-    
+        
     alphas = np.linspace(-1, 1, 11)
     unc_MAP = torch.zeros((data.n_user, len(alphas)))
     metrics['norm_unc'] = [[], []]
+
+    Cuts = {'Values': np.nanquantile(rand_preds[1], np.linspace(0.8, 0.2, 4)),
+            'Coverage': np.ones((data.n_user, 5)),
+            'Relevance': np.zeros((data.n_user, 5)),
+            'MAP': np.zeros((data.n_user, 5)),
+            'Surprise': np.zeros((data.n_user, 5))}
 
     for idxu, user in enumerate(tqdm(range(data.n_user), desc=name+' - Recommending')):
         
@@ -315,8 +347,32 @@ def test_uncertain(model, data, max_k, name):
             Recall[idxu] = n_hits / len(targets)
             URI[idxu] = (avg_unc[idxu] - unc[:max_k][hits].mean()) / unc[:max_k].std()
             # Surprise
-            profile_distances = data.distances[rec[:max_k]][:, rated]  # To use expected surprise, add: * hits[:, np.newaxis]
-            Average_Surprise[idxu] = profile_distances.min(1).cumsum(0) / np.arange(1, max_k+1)
+            if hasattr(data, 'distances'):
+                profile_distances = data.distances[rec[:max_k]][:, rated]  # To use expected surprise, add: * hits[:, np.newaxis]
+                Average_Surprise[idxu] = profile_distances.min(1).cumsum(0) / np.arange(1, max_k+1)
+
+        Cuts['MAP'][idxu, 0] = MAP[idxu][-1]
+        Cuts['Relevance'][idxu, 0] = score[:max_k].mean()
+
+        top_k_unc = unc[:max_k]
+        for idxc, cut in enumerate(Cuts['Values']):
+            if torch.sum(top_k_unc < cut) == len(top_k_unc):
+                Cuts['MAP'][idxu, idxc + 1] = Cuts['MAP'][idxu, idxc]
+                Cuts['Coverage'][idxu, idxc + 1] = Cuts['Coverage'][idxu, idxc]
+                Cuts['Relevance'][idxu, idxc + 1] = Cuts['Relevance'][idxu, idxc]
+            else:
+                top_k_constrained = rec[unc < cut][:max_k]
+                top_k_unc = unc[unc < cut][:max_k]
+                top_k_scores = score[unc < cut][:max_k]
+                Cuts['Coverage'][idxu, idxc + 1] = len(top_k_unc) / max_k
+                if len(top_k_constrained > 0):
+                    Cuts['Relevance'][idxu, idxc + 1] = top_k_scores.mean()
+                    hits_ = torch.isin(top_k_constrained, targets, assume_unique=True)
+                    n_hits = hits_.cumsum(0)
+                    if hits_.sum() > 0:
+                        precision = n_hits / precision_denom[:len(n_hits)]
+                        map_k = torch.cumsum(precision * hits_, 0) / torch.clamp(n_hits, min=1)
+                        Cuts['MAP'][idxu, idxc + 1] = map_k.numpy()[-1]
             
         if hasattr(model, 'uncertain_transform'):
             score_unc = model.uncertain_transform((score, unc))
@@ -329,8 +385,9 @@ def test_uncertain(model, data, max_k, name):
                 MAP2[idxu] = torch.cumsum(precision * hits, 0) / torch.clamp(n_hits, min=1)
                 Recall2[idxu] = n_hits / len(targets)
                 # Surprise
-                profile_distances = data.distances[rec[:max_k]][:, rated]  # To use expected surprise, add: * hits[:, np.newaxis]
-                Average_Surprise2[idxu] = profile_distances.min(1).cumsum(0) / np.arange(1, max_k+1)
+                if hasattr(data, 'distances'):
+                    profile_distances = data.distances[rec[:max_k]][:, rated]  # To use expected surprise, add: * hits[:, np.newaxis]
+                    Average_Surprise2[idxu] = profile_distances.min(1).cumsum(0) / np.arange(1, max_k+1)
             
         norm_unc = (unc[:max_k] - unc[:max_k].mean()) / unc[:max_k].std()
         metrics['norm_unc'][0] += norm_unc[hits].tolist()
@@ -352,6 +409,15 @@ def test_uncertain(model, data, max_k, name):
     metrics['URI'] = torch.nanmean(URI, 0).item()
     metrics['unc_MAP'] = unc_MAP.mean(0).numpy()
     metrics['Average_Surprise'] = Average_Surprise.mean(0)
+
+    metrics['Cuts'] = {'Values': Cuts['Values'],
+                       'Coverage': Cuts['Coverage'].mean(0),
+                       'Relevance': Cuts['Relevance'].mean(0),
+                       'MAP': Cuts['MAP'].mean(0),
+                       'Surprise': Cuts['Surprise'].mean(0),
+                       'Map*': np.array([Cuts['MAP'][Cuts['Coverage'][:, k] == 1, k].mean() for k in range(5)]),
+                       'Surprise*': np.array([Cuts['Surprise'][Cuts['Coverage'][:, k] == 1, k].mean() for k in range(5)])}
+
     
     if hasattr(model, 'uncertain_transform'):
         metrics['MAP2'] = MAP2.mean(0).numpy()
@@ -383,10 +449,111 @@ def test_uncertain(model, data, max_k, name):
         quantiles = np.quantile(uncertainty, np.linspace(0.1, 1, 11))
         metrics['MAP-UserUncertainty'] = np.zeros(len(quantiles) - 1)
         for i in range(10):
-            indexer = np.logical_and(uncertainty >= quantiles[i], uncertainty <= quantiles[i+1])
-            metrics['MAP-UserUncertainty'][i] = MAP[indexer, -1].mean()
+            idxrer = np.logical_and(uncertainty >= quantiles[i], uncertainty <= quantiles[i+1])
+            metrics['MAP-UserUncertainty'][i] = MAP[idxrer, -1].mean()
     '''
     
+    with open('results/' + name + '.pkl', 'wb') as f:
+        pickle.dump(metrics, file=f)
+    
+    return metrics
+
+
+
+def test_chap_five(model, data, max_k, name, debug=False):
+    '''
+    Code for uncertainty-aware implicit models
+    '''
+    pred = model.predict(data.test[:, 0], data.test[:, 1])
+    neg = model.predict(data.test[:, 0], data.rand['items'])
+    
+    is_concordant = pred[0] - neg[0] > 0
+    metrics = {'FCP': is_concordant.sum().item() / len(data.test)}
+    
+    rand_preds = model.predict(data.rand['users'], data.rand['items'])
+    # Fix potential bugs
+    bug_idx = rand_preds[1] < 10
+    rand_preds = rand_preds[0][bug_idx], rand_preds[1][bug_idx]
+    if not debug:
+        rand_preds = rand_preds[0], np.exp(rand_preds[1])
+    metrics['corr_usup'] = stats.spearmanr(rand_preds[1], data.user_support[data.rand['users'][bug_idx]].flatten())[0]
+    metrics['corr_isup'] = stats.spearmanr(rand_preds[1], data.item_support[data.rand['items'][bug_idx]].flatten())[0]
+
+    f, ax = plt.subplots(ncols=2)
+    ax[0].hist(rand_preds[1], density=True)
+    ax[0].set_xlabel('Uncertainty')
+    ax[0].set_ylabel('Density')
+    ax[1].plot(rand_preds[0][:1000], rand_preds[1][:1000], 'o')
+    ax[1].set_xlabel('Relevance')
+    ax[1].set_ylabel('Uncertainty')
+    f.tight_layout()
+    f.savefig(f'plots/{name}.pdf')
+    
+    precision_denom = torch.arange(1, max_k+1)
+    ratio_grid = np.linspace(0, 1, 11)
+    Results = {'Recall': np.zeros((data.n_user, len(ratio_grid), max_k)),
+               'MAP': np.zeros((data.n_user, len(ratio_grid), max_k)),
+               'Surprise': np.zeros((data.n_user, len(ratio_grid), max_k)),
+               'MAP relative': np.zeros((data.n_user, len(ratio_grid), max_k)),
+               'Recall relative': np.zeros((data.n_user, len(ratio_grid), max_k))}
+
+    for idxu, user in enumerate(tqdm(range(data.n_user), desc=name+' - Recommending')):
+        
+        targets = torch.tensor(data.test[data.test[:, 0] == user, 1])
+        targets_relative = targets[torch.isin(targets, data.tail_items, assume_unique=True)]
+        
+        rated_train = torch.tensor(data.train[:, 1][data.train[:, 0] == user])
+        rated_val = torch.tensor(data.val[:, 1][data.val[:, 0] == user])
+        
+        rated = torch.cat([rated_train, rated_val])
+
+        model.ratio = 1
+        rec, score, unc = model.rank(torch.tensor(user), ignored_item_ids=rated, top_n=999999)
+
+        for idxr, ratio in enumerate(ratio_grid):
+            if not debug:
+                score_ = ratio * score + (1 - ratio) * unc.exp().sqrt()
+            else:
+                score_ = ratio * score + (1 - ratio) * unc.sqrt()
+            rec_ = rec[torch.argsort(score_, descending=True)]
+            
+            hits = torch.isin(rec_[:max_k], targets, assume_unique=True)
+            n_hits = hits.cumsum(0)
+        
+            if n_hits[-1] > 0:
+                Results['Recall'][idxu, idxr] = n_hits / len(targets)
+                precision = n_hits / precision_denom
+                Results['MAP'][idxu, idxr] = torch.cumsum(precision * hits, 0) / torch.clamp(n_hits, min=1)
+                # Surprise
+                if hasattr(data, 'distances'):
+                    profile_distances = data.distances[rec[:max_k]][:, rated]  # To use expected surprise, add: * hits[:, np.newaxis]
+                    Results['Surprise'][idxu, idxr] = profile_distances.min(1).cumsum(0) / np.arange(1, max_k+1)
+
+            # Evaluate tail relative
+            n_target_tail = torch.isin(targets, data.tail_items).sum()
+
+            if n_target_tail > 0:
+                # Dont recommend head items
+                score_[torch.isin(rec_, data.head_items, assume_unique=True)] = -99999999
+                rec_ = rec[torch.argsort(score_, descending=True)]
+                hits = torch.isin(rec_[:max_k], targets, assume_unique=True)
+                n_hits = hits.cumsum(0)
+    
+                if n_hits[-1] > 0:
+                    Results['Recall relative'][idxu, idxr] = n_hits / n_target_tail
+                    precision = n_hits / precision_denom
+                    Results['MAP relative'][idxu, idxr] = torch.cumsum(precision * hits, 0) / torch.clamp(n_hits, min=1)
+
+            else:
+                Results['Recall relative'][idxu, idxr] = np.nan
+                Results['MAP relative'][idxu, idxr] = np.nan
+
+    metrics['Recall'] = Results['Recall']
+    metrics['MAP'] = Results['MAP']
+    metrics['Surprise'] = Results['Surprise']
+    metrics['Map relative'] = Results['MAP relative']
+    metrics['Recall relative'] = Results['Recall relative']
+                     
     with open('results/' + name + '.pkl', 'wb') as f:
         pickle.dump(metrics, file=f)
     
